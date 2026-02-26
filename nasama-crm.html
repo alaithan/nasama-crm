@@ -2,6 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="Nasama CRM">
+  <meta name="application-name" content="Nasama CRM">
+  <meta name="theme-color" content="#0A1628">
+  <link rel="manifest" href="manifest.json">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Nasama Properties CRM</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -59,6 +66,7 @@
   .btn-secondary{background:#f1f5f9;color:#334155;border:1px solid #e4ebf5}
   .btn-ghost{background:transparent;color:#64748b;border:1px solid #e4ebf5}
   .btn-edit{background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe}
+  .btn-delete{background:#fee2e2;color:#dc2626;border:1px solid #fecaca}
   .btn-danger{background:#fee2e2;color:#dc2626}
   /* Badges */
   .badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:.72rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
@@ -219,6 +227,7 @@ async function initDB() {
     { sql: `CREATE TABLE IF NOT EXISTS offplan (id INTEGER PRIMARY KEY AUTOINCREMENT, brokerId INTEGER, clientId INTEGER, developerId INTEGER, status TEXT DEFAULT 'Pending', project TEXT, unit TEXT, price REAL, commPct REAL, invoiceNo TEXT, date TEXT, aml TEXT DEFAULT 'No', kycSent TEXT DEFAULT 'No', kycReceived TEXT DEFAULT 'No', notes TEXT, createdAt TEXT DEFAULT (datetime('now')))` },
     { sql: `CREATE TABLE IF NOT EXISTS secondary (id INTEGER PRIMARY KEY AUTOINCREMENT, brokerId INTEGER, buyerId INTEGER, sellerId INTEGER, developerId INTEGER, status TEXT DEFAULT 'Pending', property TEXT, propNo TEXT, contract TEXT, price REAL, sellerPct REAL, buyerPct REAL, discount REAL DEFAULT 0, invoiceNo TEXT, date TEXT, amlBuyer TEXT DEFAULT 'No', amlSeller TEXT DEFAULT 'No', kycSent TEXT DEFAULT 'No', kycReceived TEXT DEFAULT 'No', createdAt TEXT DEFAULT (datetime('now')))` },
     { sql: `CREATE TABLE IF NOT EXISTS rental (id INTEGER PRIMARY KEY AUTOINCREMENT, brokerId INTEGER, clientId INTEGER, status TEXT DEFAULT 'Active', property TEXT, propNo TEXT, contractType TEXT DEFAULT 'Annual', rent REAL, commPct REAL, invoiceNo TEXT, dateRented TEXT, startDate TEXT, endDate TEXT, pfExpert TEXT DEFAULT 'No', notes TEXT, createdAt TEXT DEFAULT (datetime('now')))` },
+    { sql: `CREATE TABLE IF NOT EXISTS commission_release (id INTEGER PRIMARY KEY AUTOINCREMENT, brokerId INTEGER, dealTable TEXT, dealId INTEGER, projectName TEXT, totalCommission REAL, amountReceived REAL DEFAULT 0, releaseDate TEXT, status TEXT DEFAULT 'Pending', notes TEXT, createdAt TEXT DEFAULT (datetime('now')))` },
   ]);
   const cnt = await q("SELECT COUNT(*) as c FROM brokers");
   if (Number(cnt[0].c) === 0) {
@@ -279,7 +288,7 @@ const renewalDate = d => { if(!d.endDate)return "—"; const e=new Date(d.endDat
 
 // ─── APP STATE ────────────────────────────────────────────────────────────────
 let CU = null; // current user
-let DATA = { brokers:[], developers:[], clients:[], offplan:[], secondary:[], rental:[] };
+let DATA = { brokers:[], developers:[], clients:[], offplan:[], secondary:[], rental:[], commission_release:[] };
 
 const USERS = [
   { username:"admin",  password:"admin123",  role:"Admin",  name:"Admin User",        brokerId:null },
@@ -296,6 +305,7 @@ const NAV = [
   { key:"secondary", label:"Secondary",  icon:"🔄", admin:false },
   { key:"rental",    label:"Rental",     icon:"🏠", admin:false },
   { key:"reports",   label:"Reports",    icon:"📊", admin:false },
+  { key:"commission_release", label:"Commission Release", icon:"💰", admin:true },
   { key:"settings",  label:"Settings",   icon:"⚙️", admin:true  },
 ];
 
@@ -325,24 +335,26 @@ async function init() {
 function setMsg(t) { document.getElementById("loading-msg").textContent = t; }
 
 async function loadAll() {
-  const [b,dev,c,op,sec,ren] = await Promise.all([
+  const [b,dev,c,op,sec,ren,cr] = await Promise.all([
     q("SELECT * FROM brokers ORDER BY id"),
     q("SELECT * FROM developers ORDER BY id"),
     q("SELECT * FROM clients ORDER BY id"),
     q("SELECT * FROM offplan ORDER BY id DESC"),
     q("SELECT * FROM secondary ORDER BY id DESC"),
     q("SELECT * FROM rental ORDER BY id DESC"),
+    q("SELECT * FROM commission_release ORDER BY id DESC"),
   ]);
-  DATA.brokers    = b.map(r=>({...r}));
-  DATA.developers = dev.map(r=>({...r}));
-  DATA.clients    = c.map(r=>({...r}));
-  DATA.offplan    = op.map(r=>({...r}));
-  DATA.secondary  = sec.map(r=>({...r}));
-  DATA.rental     = ren.map(r=>({...r}));
+  DATA.brokers             = b.map(r=>({...r}));
+  DATA.developers          = dev.map(r=>({...r}));
+  DATA.clients             = c.map(r=>({...r}));
+  DATA.offplan             = op.map(r=>({...r}));
+  DATA.secondary           = sec.map(r=>({...r}));
+  DATA.rental              = ren.map(r=>({...r}));
+  DATA.commission_release  = cr.map(r=>({...r}));
 }
 
 async function reload(table) {
-  const rows = await q(`SELECT * FROM ${table} ORDER BY id ${table==="offplan"||table==="secondary"||table==="rental"?"DESC":""}`);
+  const rows = await q(`SELECT * FROM ${table} ORDER BY id ${table==="offplan"||table==="secondary"||table==="rental"||table==="commission_release"?"DESC":""}`);
   DATA[table] = rows.map(r=>({...r}));
 }
 
@@ -397,7 +409,7 @@ window.goPage = function(key) {
   chartInstances={};
   const pc = document.getElementById("page-content");
   pc.innerHTML = "";
-  const pages = { dashboard:renderDashboard, brokers:renderBrokers, developers:renderDevelopers, clients:renderClients, offplan:renderOffplan, secondary:renderSecondary, rental:renderRental, reports:renderReports, settings:renderSettings };
+  const pages = { dashboard:renderDashboard, brokers:renderBrokers, developers:renderDevelopers, clients:renderClients, offplan:renderOffplan, secondary:renderSecondary, rental:renderRental, reports:renderReports, commission_release:renderCommissionRelease, settings:renderSettings };
   (pages[key]||renderDashboard)(pc);
 };
 
@@ -415,36 +427,148 @@ function renderDashboard(pc) {
   const alerts=[];
   brokers.forEach(b=>{ if(daysUntil(b.reraExpiry)<=60) alerts.push(`⚠️ RERA expiring: ${b.name} (${b.reraExpiry})`); });
   rental.forEach(r=>{ if(daysUntil(r.endDate)<=90&&r.status==="Active") alerts.push(`🔔 Renewal due: ${r.property} (ends ${r.endDate})`); });
-  const totalComm = offplan.filter(d=>d.status==="Closed").reduce((s,d)=>s+commOP(d),0)
-                  + secondary.filter(d=>d.status==="Closed").reduce((s,d)=>s+commSec(d),0)
-                  + rental.reduce((s,d)=>s+commRT(d),0);
+
+  // Commission totals — all deals regardless of status
+  const opComm  = offplan.reduce((s,d)=>s+commOP(d),0);
+  const seComm  = secondary.reduce((s,d)=>s+commSec(d),0);
+  const reComm  = rental.reduce((s,d)=>s+commRT(d),0);
+  const totalComm = opComm + seComm + reComm;
+
+  // Purchase amount totals
+  const opAmt = offplan.reduce((s,d)=>s+n(d.price),0);
+  const seAmt = secondary.reduce((s,d)=>s+n(d.price),0);
+  const reAmt = rental.reduce((s,d)=>s+n(d.rent),0);
+  const totalAmt = opAmt + seAmt + reAmt;
+
   const stats=[
-    {l:"Total Commission",v:fmtAED(totalComm),gold:true},
-    {l:"Total Brokers",v:brokers.length},{l:"Total Clients",v:clients.length},
-    {l:"Developers",v:developers.length},{l:"Off Plan Deals",v:offplan.length},
-    {l:"Secondary Deals",v:secondary.length},{l:"Rental Deals",v:rental.length},
-    {l:"Active Alerts",v:alerts.length,gold:alerts.length>0},
+    {l:"Total Commission",        v:fmtAED(totalComm), gold:true},
+    {l:"Off Plan Commission",     v:fmtAED(opComm),    gold:true},
+    {l:"Secondary Commission",    v:fmtAED(seComm),    gold:true},
+    {l:"Rental Commission",       v:fmtAED(reComm),    gold:true},
+    {l:"Total Purchase Amount",   v:fmtAED(totalAmt),  gold:true},
+    {l:"Off Plan Sales Value",    v:fmtAED(opAmt),     gold:true},
+    {l:"Secondary Sales Value",   v:fmtAED(seAmt),     gold:true},
+    {l:"Rental Annual Value",     v:fmtAED(reAmt),     gold:true},
+    {l:"Total Brokers",   v:brokers.length},
+    {l:"Total Clients",   v:clients.length},
+    {l:"Developers",      v:developers.length},
+    {l:"Off Plan Deals",  v:offplan.length},
+    {l:"Secondary Deals", v:secondary.length},
+    {l:"Rental Deals",    v:rental.length},
+    {l:"Active Alerts",   v:alerts.length, gold:alerts.length>0},
   ];
+
+  // Build monthly revenue from Jan–Dec 2026 using real data
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const monthlyOP = new Array(12).fill(0);
+  const monthlySE = new Array(12).fill(0);
+  const monthlyRE = new Array(12).fill(0);
+
+  const getMonth = dateStr => {
+    if (!dateStr) return -1;
+    const d = new Date(dateStr);
+    if (isNaN(d)) return -1;
+    if (d.getFullYear() !== 2026) return -1;
+    return d.getMonth(); // 0=Jan
+  };
+
+  offplan.forEach(d => {
+    const m = getMonth(d.date);
+    if (m >= 0) monthlyOP[m] += commOP(d);
+  });
+  secondary.forEach(d => {
+    const m = getMonth(d.date);
+    if (m >= 0) monthlySE[m] += commSec(d);
+  });
+  rental.forEach(d => {
+    const m = getMonth(d.dateRented);
+    if (m >= 0) monthlyRE[m] += commRT(d);
+  });
+
+  const monthlyTotal = MONTHS.map((_,i) => monthlyOP[i] + monthlySE[i] + monthlyRE[i]);
+
   pc.innerHTML = `
     <div style="font-size:1.5rem;font-weight:800;margin-bottom:4px;color:var(--dark)">Dashboard</div>
     <div style="color:#64748b;font-size:.83rem;margin-bottom:16px">Welcome back, ${esc(CU.name)}</div>
     ${alerts.map(a=>`<div class="alert-bar">${esc(a)}</div>`).join("")}
     <div class="stat-grid">${stats.map(s=>`<div class="stat-card ${s.gold?"gold":"dark"}"><div class="stat-val">${s.v}</div><div class="stat-lbl">${s.l}</div></div>`).join("")}</div>
     <div class="chart-grid">
-      <div class="card"><div style="font-weight:700;margin-bottom:14px">Monthly Revenue (AED)</div><div class="chart-wrap"><canvas id="ch-monthly"></canvas></div></div>
+      <div class="card"><div style="font-weight:700;margin-bottom:14px">Monthly Commission 2026 (AED)</div><div class="chart-wrap"><canvas id="ch-monthly"></canvas></div></div>
       <div class="card"><div style="font-weight:700;margin-bottom:14px">Deal Distribution</div><div class="chart-wrap"><canvas id="ch-pie"></canvas></div></div>
     </div>
-    <div class="card"><div style="font-weight:700;margin-bottom:14px">Broker Performance</div><div style="height:150px"><canvas id="ch-broker"></canvas></div></div>`;
+    <div class="card"><div style="font-weight:700;margin-bottom:14px">Broker Performance</div><div style="height:150px"><canvas id="ch-broker"></canvas></div></div>
+    <div class="card"><div style="font-weight:700;margin-bottom:14px">Total Purchase Value by Developer (AED)</div><div style="height:220px"><canvas id="ch-devamt"></canvas></div></div>`;
 
   const GOLD="#C9A84C";
-  const monthly={labels:["Sep","Oct","Nov","Dec","Jan","Feb"],datasets:[{label:"Revenue",data:[280000,420000,510000,390000,620000,180000],borderColor:GOLD,backgroundColor:GOLD+"30",fill:true,tension:.4,pointBackgroundColor:GOLD}]};
-  chartInstances.monthly = new Chart("ch-monthly",{type:"line",data:monthly,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`AED ${fmt(c.raw)}`}}},scales:{y:{ticks:{callback:v=>`${v/1000}K`}}}}});
 
-  const pie={labels:["Off Plan","Secondary","Rental"],datasets:[{data:[offplan.filter(d=>d.status==="Closed").length,secondary.filter(d=>d.status==="Closed").length,rental.length],backgroundColor:[GOLD,"#2563EB","#10b981"],borderWidth:2,borderColor:"#fff"}]};
+  // Monthly chart — Jan to Dec 2026, stacked by type
+  chartInstances.monthly = new Chart("ch-monthly",{
+    type:"bar",
+    data:{
+      labels: MONTHS,
+      datasets:[
+        {label:"Off Plan",  data:monthlyOP, backgroundColor:GOLD,      borderRadius:3, stack:"s"},
+        {label:"Secondary", data:monthlySE, backgroundColor:"#2563EB",  borderRadius:3, stack:"s"},
+        {label:"Rental",    data:monthlyRE, backgroundColor:"#10b981",  borderRadius:3, stack:"s"},
+      ]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{position:"bottom",labels:{font:{size:11},color:"#374151"}},
+        tooltip:{callbacks:{label:c=>`${c.dataset.label}: AED ${fmt(c.raw)}`}}
+      },
+      scales:{
+        x:{stacked:true},
+        y:{stacked:true, ticks:{callback:v=>v>=1000?`${Math.round(v/1000)}K`:v}}
+      }
+    }
+  });
+
+  const pie={labels:["Off Plan","Secondary","Rental"],datasets:[{data:[offplan.length,secondary.length,rental.length],backgroundColor:[GOLD,"#2563EB","#10b981"],borderWidth:2,borderColor:"#fff"}]};
   chartInstances.pie = new Chart("ch-pie",{type:"doughnut",data:pie,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{font:{size:11}}}}}});
 
-  const bperf=brokers.map(b=>({ name:b.name.split(" ")[0], total: offplan.filter(d=>n(d.brokerId)===n(b.id)&&d.status==="Closed").reduce((s,d)=>s+commOP(d),0)+secondary.filter(d=>n(d.brokerId)===n(b.id)&&d.status==="Closed").reduce((s,d)=>s+commSec(d),0)+rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commRT(d),0) })).sort((a,b)=>b.total-a.total);
-  chartInstances.broker = new Chart("ch-broker",{type:"bar",data:{labels:bperf.map(b=>b.name),datasets:[{label:"Commission",data:bperf.map(b=>b.total),backgroundColor:GOLD,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`AED ${fmt(c.raw)}`}}},scales:{y:{ticks:{callback:v=>`${v/1000}K`}}}}});
+  const bperf=brokers.map(b=>({ name:b.name.split(" ")[0], total: offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commOP(d),0)+secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commSec(d),0)+rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commRT(d),0) })).sort((a,b)=>b.total-a.total).filter(b=>b.total>0);
+  chartInstances.broker = new Chart("ch-broker",{type:"bar",data:{labels:bperf.map(b=>b.name),datasets:[{label:"Commission",data:bperf.map(b=>b.total),backgroundColor:GOLD,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`AED ${fmt(c.raw)}`}}},scales:{y:{ticks:{callback:v=>v>=1000?`${Math.round(v/1000)}K`:v}}}}});
+
+  // Developer purchase value chart
+  const devAmtMap = {};
+  offplan.forEach(d => {
+    const name = dName(d.developerId);
+    if (name && name !== '—') devAmtMap[name] = (devAmtMap[name]||0) + n(d.price);
+  });
+  secondary.forEach(d => {
+    const name = dName(d.developerId);
+    if (name && name !== '—') devAmtMap[name] = (devAmtMap[name]||0) + n(d.price);
+  });
+  const devEntries = Object.entries(devAmtMap).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+  const devColors = devEntries.map((_,i) => {
+    const palette = [GOLD,'#2563EB','#10b981','#8b5cf6','#f59e0b','#ef4444','#06b6d4','#ec4899','#84cc16','#f97316'];
+    return palette[i % palette.length];
+  });
+  chartInstances.devamt = new Chart("ch-devamt",{
+    type:"bar",
+    data:{
+      labels: devEntries.map(([k])=>k),
+      datasets:[{
+        label:"Purchase Value",
+        data: devEntries.map(([,v])=>v),
+        backgroundColor: devColors,
+        borderRadius:4
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false, indexAxis:'y',
+      plugins:{
+        legend:{display:false},
+        tooltip:{callbacks:{label:c=>`AED ${fmt(c.raw)}`}}
+      },
+      scales:{
+        x:{ticks:{callback:v=>v>=1000000?`${(v/1000000).toFixed(1)}M`:v>=1000?`${Math.round(v/1000)}K`:v}},
+        y:{ticks:{font:{size:10}}}
+      }
+    }
+  });
 }
 
 // ─── BROKERS ──────────────────────────────────────────────────────────────────
@@ -482,6 +606,7 @@ window.openBrokerForm = function(id) {
       <div class="field"><label>Status</label><select id="f-status"><option ${b?.status==="Active"?"selected":""}>Active</option><option ${b?.status==="Inactive"?"selected":""}>Inactive</option></select></div>
     </div>
     <div class="save-bar">
+      ${id ? `<button class="btn btn-delete" onclick="deleteRecord('brokers',${id},'broker')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="save-btn" onclick="saveBroker(${id||0})">💾 Save Changes</button>
     </div>`);
@@ -525,6 +650,7 @@ window.openDevForm=function(id){
       <div class="field"><label>Agreement Expiry</label><input type="date" id="f-expiry" value="${esc(d?.agreementExpiry||"")}"/></div>
     </div>
     <div class="save-bar">
+      ${id ? `<button class="btn btn-delete" onclick="deleteRecord('developers',${id},'developer')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="save-btn" onclick="saveDev(${id||0})">💾 Save Changes</button>
     </div>`);
@@ -566,6 +692,7 @@ window.openClientForm=function(id){
       <div class="field"><label>Client Type</label><select id="f-type"><option ${c?.type==="Buyer"?"selected":""}>Buyer</option><option ${c?.type==="Seller"?"selected":""}>Seller</option><option ${c?.type==="Tenant"?"selected":""}>Tenant</option><option ${c?.type==="Landlord"?"selected":""}>Landlord</option></select></div>
     </div>
     <div class="save-bar">
+      ${id ? `<button class="btn btn-delete" onclick="deleteRecord('clients',${id},'client')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="save-btn" onclick="saveClient(${id||0})">💾 Save Changes</button>
     </div>`);
@@ -630,6 +757,7 @@ window.openOPForm=function(id){
     <div style="margin-top:14px"><div class="field"><label>Notes</label><textarea id="f-notes" style="height:60px;resize:vertical">${esc(d?.notes||"")}</textarea></div></div>
     <div class="comm-box">Auto-calculated Commission: <span id="op-comm-preview">${fmtAED(d?commOP(d):0)}</span></div>
     <div class="save-bar">
+      ${id ? `<button class="btn btn-delete" onclick="deleteRecord('offplan',${id},'off plan deal')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="save-btn" onclick="saveOP(${id||0})">💾 Save Changes</button>
     </div>`);
@@ -695,6 +823,7 @@ window.openSEForm=function(id){
     </div>
     <div class="comm-box">Auto-calculated Total Commission: <span id="se-comm-preview">${fmtAED(d?commSec(d):0)}</span></div>
     <div class="save-bar">
+      ${id ? `<button class="btn btn-delete" onclick="deleteRecord('secondary',${id},'secondary deal')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="save-btn" onclick="saveSE(${id||0})">💾 Save Changes</button>
     </div>`);
@@ -759,6 +888,7 @@ window.openREForm=function(id){
     <div style="margin-top:14px"><div class="field"><label>Notes</label><textarea id="f-notes" style="height:60px;resize:vertical">${esc(d?.notes||"")}</textarea></div></div>
     <div class="comm-box">Auto-calculated Total (incl. VAT 5%): <span id="re-comm-preview">${fmtAED(d?commRT(d):0)}</span></div>
     <div class="save-bar">
+      ${id ? `<button class="btn btn-delete" onclick="deleteRecord('rental',${id},'rental deal')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="save-btn" onclick="saveRE(${id||0})">💾 Save Changes</button>
     </div>`);
@@ -776,26 +906,305 @@ window.saveRE=async function(id){
 
 // ─── REPORTS ──────────────────────────────────────────────────────────────────
 function renderReports(pc){
-  const list=CU.role==="Broker"?DATA.brokers.filter(b=>n(b.id)===CU.brokerId):DATA.brokers;
-  pc.innerHTML=`<div class="page-title" style="margin-bottom:20px">Commission Reports</div>`+list.map(b=>{
-    const opD=DATA.offplan.filter(d=>n(d.brokerId)===n(b.id)&&d.status==="Closed");
-    const seD=DATA.secondary.filter(d=>n(d.brokerId)===n(b.id)&&d.status==="Closed");
-    const reD=DATA.rental.filter(d=>n(d.brokerId)===n(b.id));
-    const opC=opD.reduce((s,d)=>s+commOP(d),0),seC=seD.reduce((s,d)=>s+commSec(d),0),reC=reD.reduce((s,d)=>s+commRT(d),0);
-    return `<div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <div><div style="font-weight:700;font-size:1.05rem">${esc(b.name)}</div><div style="font-size:.79rem;color:#64748b">RERA: ${esc(b.rera)} · ${esc(b.nationality)}</div></div>
-        <div style="text-align:right"><div style="font-size:1.4rem;font-weight:800;color:var(--gold)">${fmtAED(opC+seC+reC)}</div><div style="font-size:.74rem;color:#64748b">Total Commission</div></div>
+  const list = CU.role==="Broker" ? DATA.brokers.filter(b=>n(b.id)===CU.brokerId) : DATA.brokers;
+
+  const active = list.filter(b =>
+    DATA.offplan.some(d=>n(d.brokerId)===n(b.id)) ||
+    DATA.secondary.some(d=>n(d.brokerId)===n(b.id)) ||
+    DATA.rental.some(d=>n(d.brokerId)===n(b.id))
+  );
+
+  const grandOpC  = active.reduce((s,b)=>s+DATA.offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commOP(d),0),0);
+  const grandSeC  = active.reduce((s,b)=>s+DATA.secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commSec(d),0),0);
+  const grandReC  = active.reduce((s,b)=>s+DATA.rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commRT(d),0),0);
+  const grandOpAmt= active.reduce((s,b)=>s+DATA.offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.price),0),0);
+  const grandSeAmt= active.reduce((s,b)=>s+DATA.secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.price),0),0);
+  const grandReAmt= active.reduce((s,b)=>s+DATA.rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.rent),0),0);
+
+  const summaryHtml = CU.role==="Admin" ? `
+    <div class="card" style="margin-bottom:24px;background:linear-gradient(135deg,#0A1628,#0D2147);color:#fff">
+      <div style="font-size:1.1rem;font-weight:800;color:#C9A84C;margin-bottom:16px">📊 Overall Performance Summary</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">
+        ${[
+          ["Total Commission",     fmtAED(grandOpC+grandSeC+grandReC)],
+          ["Off Plan Commission",  fmtAED(grandOpC)],
+          ["Secondary Commission", fmtAED(grandSeC)],
+          ["Rental Commission",    fmtAED(grandReC)],
+          ["Off Plan Sales Value", fmtAED(grandOpAmt)],
+          ["Secondary Sales Value",fmtAED(grandSeAmt)],
+          ["Rental Annual Value",  fmtAED(grandReAmt)],
+          ["Active Brokers",       active.length],
+        ].map(([l,v])=>`<div style="background:#ffffff12;border-radius:10px;padding:12px 14px"><div style="font-size:.72rem;color:#93a3c2;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">${l}</div><div style="font-weight:800;font-size:1rem;color:#C9A84C">${v}</div></div>`).join("")}
       </div>
-      <div class="g3" style="margin-bottom:${opD.length?16:0}px">
-        ${[["🏗 Off Plan",opC,opD.length],["🔄 Secondary",seC,seD.length],["🏠 Rental",reC,reD.length]].map(([lbl,comm,cnt])=>`<div style="background:#f8fafc;border-radius:10px;padding:12px 14px;border:1px solid #e4ebf5"><div style="font-size:.74rem;color:#64748b;font-weight:700;margin-bottom:4px">${lbl}</div><div style="font-weight:700">${fmtAED(comm)}</div><div style="font-size:.76rem;color:#94a3b8;margin-top:2px">${cnt} deals</div></div>`).join("")}
+    </div>` : "";
+
+  const brokersHtml = active.map(b=>{
+    const opD = DATA.offplan.filter(d=>n(d.brokerId)===n(b.id));
+    const seD = DATA.secondary.filter(d=>n(d.brokerId)===n(b.id));
+    const reD = DATA.rental.filter(d=>n(d.brokerId)===n(b.id));
+    const opC = opD.reduce((s,d)=>s+commOP(d),0);
+    const seC = seD.reduce((s,d)=>s+commSec(d),0);
+    const reC = reD.reduce((s,d)=>s+commRT(d),0);
+    const opAmt = opD.reduce((s,d)=>s+n(d.price),0);
+    const seAmt = seD.reduce((s,d)=>s+n(d.price),0);
+    const reAmt = reD.reduce((s,d)=>s+n(d.rent),0);
+    const totalC = opC+seC+reC;
+    const totalAmt = opAmt+seAmt+reAmt;
+    const reraAlert = daysUntil(b.reraExpiry)<=60
+      ? `<span style="background:#fee2e2;color:#dc2626;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:8px">⚠️ RERA Expiring</span>` : "";
+
+    const opRows = opD.map(d=>`<tr>
+      <td>${esc(d.date)}</td><td><b>${esc(d.project)}</b></td><td>${esc(d.unit)}</td>
+      <td>${esc(dName(d.developerId))}</td><td>${esc(cName(d.clientId))}</td><td>${badge(d.status)}</td>
+      <td style="text-align:right;font-weight:600">${fmt(d.price)}</td>
+      <td style="text-align:right">${d.commPct}%</td>
+      <td style="text-align:right;color:var(--gold);font-weight:700">${fmt(commOP(d))}</td>
+    </tr>`).join("");
+
+    const seRows = seD.map(d=>`<tr>
+      <td>${esc(d.date)}</td><td><b>${esc(d.property)}</b></td><td>${esc(d.propNo)}</td>
+      <td>${esc(dName(d.developerId))}</td><td>${esc(cName(d.buyerId))}</td><td>${badge(d.status)}</td>
+      <td style="text-align:right;font-weight:600">${fmt(d.price)}</td>
+      <td style="text-align:right">${d.sellerPct}%/${d.buyerPct}%</td>
+      <td style="text-align:right;color:var(--gold);font-weight:700">${fmt(commSec(d))}</td>
+    </tr>`).join("");
+
+    const reRows = reD.map(d=>`<tr>
+      <td>${esc(d.dateRented)}</td><td><b>${esc(d.property)}</b></td><td>${esc(d.propNo)}</td>
+      <td>${esc(d.contractType)}</td><td>${esc(cName(d.clientId))}</td><td>${badge(d.status)}</td>
+      <td style="text-align:right;font-weight:600">${fmt(d.rent)}</td>
+      <td style="text-align:right">${d.commPct}%</td>
+      <td style="text-align:right;color:var(--gold);font-weight:700">${fmt(commRT(d))}</td>
+    </tr>`).join("");
+
+    return `<div class="card" style="margin-bottom:20px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+        <div>
+          <div style="font-weight:800;font-size:1.1rem">${esc(b.name)}${reraAlert}</div>
+          <div style="font-size:.79rem;color:#64748b;margin-top:3px">RERA: ${esc(b.rera)||"—"} &nbsp;·&nbsp; ${esc(b.nationality)} &nbsp;·&nbsp; ${esc(b.contact)}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:1.5rem;font-weight:800;color:var(--gold)">${fmtAED(totalC)}</div>
+          <div style="font-size:.74rem;color:#64748b">Commission &nbsp;|&nbsp; <b style="color:#334155">${fmtAED(totalAmt)}</b> sales value</div>
+        </div>
       </div>
-      ${opD.length?`<div class="overflow"><table><thead><tr><th>Project</th><th>Unit</th><th>Price (AED)</th><th>Comm %</th><th>Commission (AED)</th><th>Date</th></tr></thead><tbody>${opD.map(d=>`<tr><td>${esc(d.project)}</td><td>${esc(d.unit)}</td><td style="font-weight:600">${fmt(d.price)}</td><td>${d.commPct}%</td><td style="color:var(--gold);font-weight:700">${fmt(commOP(d))}</td><td>${esc(d.date)}</td></tr>`).join("")}</tbody></table></div>`:""}
+      <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:16px">
+        ${[
+          ["Off Plan Deals",  opD.length],["Off Plan Comm",   fmtAED(opC)],
+          ["Secondary Deals", seD.length],["Secondary Comm",  fmtAED(seC)],
+          ["Rental Deals",    reD.length],["Rental Comm",     fmtAED(reC)],
+        ].map(([l,v])=>`<div style="background:#f8fafc;border-radius:9px;padding:10px 12px;border:1px solid #e4ebf5"><div style="font-size:.68rem;color:#64748b;font-weight:700;margin-bottom:3px;text-transform:uppercase">${l}</div><div style="font-weight:800;font-size:.9rem;color:var(--dark)">${v}</div></div>`).join("")}
+      </div>
+      ${opD.length ? `
+        <div style="font-weight:700;font-size:.85rem;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid var(--navy);color:var(--navy)">🏗 Off Plan Deals</div>
+        <div class="overflow" style="margin-bottom:18px"><table>
+          <thead><tr><th>Date</th><th>Project</th><th>Unit</th><th>Developer</th><th>Client</th><th>Status</th><th style="text-align:right">Price (AED)</th><th style="text-align:right">Comm%</th><th style="text-align:right">Commission</th></tr></thead>
+          <tbody>${opRows}</tbody>
+          <tfoot><tr style="background:#fef9c3"><td colspan="6" style="font-weight:700">Subtotal</td><td style="font-weight:700;text-align:right">${fmt(opAmt)}</td><td></td><td style="font-weight:800;color:var(--gold);text-align:right">${fmt(opC)}</td></tr></tfoot>
+        </table></div>` : ""}
+      ${seD.length ? `
+        <div style="font-weight:700;font-size:.85rem;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid var(--navy);color:var(--navy)">🔄 Secondary (Resale) Deals</div>
+        <div class="overflow" style="margin-bottom:18px"><table>
+          <thead><tr><th>Date</th><th>Property</th><th>Unit</th><th>Developer</th><th>Buyer</th><th>Status</th><th style="text-align:right">Price (AED)</th><th style="text-align:right">Comm%</th><th style="text-align:right">Commission</th></tr></thead>
+          <tbody>${seRows}</tbody>
+          <tfoot><tr style="background:#fef9c3"><td colspan="6" style="font-weight:700">Subtotal</td><td style="font-weight:700;text-align:right">${fmt(seAmt)}</td><td></td><td style="font-weight:800;color:var(--gold);text-align:right">${fmt(seC)}</td></tr></tfoot>
+        </table></div>` : ""}
+      ${reD.length ? `
+        <div style="font-weight:700;font-size:.85rem;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid var(--navy);color:var(--navy)">🏠 Rental Deals</div>
+        <div class="overflow"><table>
+          <thead><tr><th>Date</th><th>Property</th><th>Unit</th><th>Type</th><th>Client</th><th>Status</th><th style="text-align:right">Rent (AED)</th><th style="text-align:right">Comm%</th><th style="text-align:right">Total w/VAT</th></tr></thead>
+          <tbody>${reRows}</tbody>
+          <tfoot><tr style="background:#fef9c3"><td colspan="6" style="font-weight:700">Subtotal</td><td style="font-weight:700;text-align:right">${fmt(reAmt)}</td><td></td><td style="font-weight:800;color:var(--gold);text-align:right">${fmt(reC)}</td></tr></tfoot>
+        </table></div>` : ""}
     </div>`;
   }).join("");
+
+  pc.innerHTML = `
+    <div class="page-hdr"><div class="page-title">Broker Performance Reports</div></div>
+    ${summaryHtml}
+    ${brokersHtml}
+    ${active.length===0 ? '<div class="card" style="text-align:center;color:#94a3b8;padding:40px">No deals found.</div>' : ''}
+  `;
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
+
+// ─── COMMISSION RELEASE ───────────────────────────────────────────────────────
+function renderCommissionRelease(pc){
+  const rows = DATA.commission_release;
+
+  // Build deal options: all offplan + secondary + rental with broker info
+  const allDeals = [
+    ...DATA.offplan.map(d=>({ table:'offplan', id:d.id, label:`[OP] ${d.project} - ${d.unit} (${bName(d.brokerId)})`, brokerId:d.brokerId, project:`${d.project} - ${d.unit}`, comm:commOP(d) })),
+    ...DATA.secondary.map(d=>({ table:'secondary', id:d.id, label:`[SE] ${d.property} ${d.propNo} (${bName(d.brokerId)})`, brokerId:d.brokerId, project:`${d.property} ${d.propNo}`, comm:commSec(d) })),
+    ...DATA.rental.map(d=>({ table:'rental', id:d.id, label:`[RE] ${d.property} ${d.propNo} (${bName(d.brokerId)})`, brokerId:d.brokerId, project:`${d.property} ${d.propNo}`, comm:commRT(d) })),
+  ];
+
+  const totalComm   = rows.reduce((s,r)=>s+n(r.totalCommission),0);
+  const totalRec    = rows.reduce((s,r)=>s+n(r.amountReceived),0);
+  const totalPend   = rows.filter(r=>r.status==='Pending').reduce((s,r)=>s+n(r.totalCommission)-n(r.amountReceived),0);
+
+  pc.innerHTML = `
+    <div class="page-hdr">
+      <div class="page-title">Commission Release <small>(${rows.length})</small></div>
+      <button class="btn btn-primary" onclick="openCRForm(null)">+ Add Release</button>
+    </div>
+    <div class="stat-grid" style="margin-bottom:18px">
+      <div class="stat-card gold"><div class="stat-val">${fmtAED(totalComm)}</div><div class="stat-lbl">Total Commission</div></div>
+      <div class="stat-card gold"><div class="stat-val">${fmtAED(totalRec)}</div><div class="stat-lbl">Total Received</div></div>
+      <div class="stat-card dark"><div class="stat-val">${fmtAED(totalPend)}</div><div class="stat-lbl">Pending Balance</div></div>
+      <div class="stat-card dark"><div class="stat-val">${rows.filter(r=>r.status==='Paid').length} / ${rows.length}</div><div class="stat-lbl">Paid / Total</div></div>
+    </div>
+    <div class="card">
+      <div class="search-row">
+        <div class="search-wrap"><span class="icon">🔍</span><input id="q-cr" placeholder="Search broker or project…" oninput="filterCR()"/></div>
+        <select id="sf-cr" style="width:160px" onchange="filterCR()"><option>All</option><option>Pending</option><option>Paid</option></select>
+      </div>
+      <div class="overflow"><table>
+        <thead><tr>
+          <th>ID</th><th>Broker</th><th>Project / Deal</th><th>Type</th>
+          <th style="text-align:right">Total Commission</th>
+          <th style="text-align:right">Amount Received</th>
+          <th style="text-align:right">Balance</th>
+          <th>Date</th><th>Status</th><th>Notes</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="tbody-cr">${crRows(rows)}</tbody>
+      </table></div>
+    </div>`;
+
+  // store allDeals on window for form use
+  window._crDeals = allDeals;
+}
+
+function crRows(rows){
+  return rows.map(r=>{
+    const balance = n(r.totalCommission) - n(r.amountReceived);
+    return `<tr>
+      <td class="mono">${id3('CR',r.id)}</td>
+      <td><b>${esc(bName(r.brokerId))}</b></td>
+      <td>${esc(r.projectName)}</td>
+      <td><span class="badge b-blue">${esc(r.dealTable==='offplan'?'Off Plan':r.dealTable==='secondary'?'Secondary':'Rental')}</span></td>
+      <td style="text-align:right;font-weight:600">${fmtAED(r.totalCommission)}</td>
+      <td style="text-align:right;color:#16a34a;font-weight:700">${fmtAED(r.amountReceived)}</td>
+      <td style="text-align:right;color:${balance>0?'#dc2626':'#16a34a'};font-weight:700">${fmtAED(balance)}</td>
+      <td>${esc(r.releaseDate)}</td>
+      <td>${badge(r.status)}</td>
+      <td style="font-size:.78rem;color:#64748b;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.notes||'')}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-edit" onclick="openCRForm(${r.id})">✏️ Edit</button>
+      </td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="11" style="text-align:center;color:#94a3b8;padding:24px">No records</td></tr>`;
+}
+
+window.filterCR = function(){
+  const qv = (document.getElementById('q-cr')?.value||'').toLowerCase();
+  const sf  = document.getElementById('sf-cr')?.value||'All';
+  document.getElementById('tbody-cr').innerHTML = crRows(
+    DATA.commission_release.filter(r=>
+      (sf==='All'||r.status===sf) &&
+      (bName(r.brokerId).toLowerCase().includes(qv) || (r.projectName||'').toLowerCase().includes(qv))
+    )
+  );
+};
+
+window.openCRForm = function(id){
+  const r = id ? DATA.commission_release.find(x=>n(x.id)===n(id)) : null;
+  const deals = window._crDeals || [];
+
+  // Build deal selector grouped by broker
+  const dealOpts = deals.map(d=>`<option value="${d.table}|${d.id}|${d.brokerId}|${d.comm.toFixed(2)}" ${r && r.dealTable===d.table && n(r.dealId)===n(d.id)?'selected':''}>${esc(d.label)} — ${fmtAED(d.comm)}</option>`).join('');
+
+  openModal(r ? 'Edit Commission Release' : 'Add Commission Release', `
+    <div class="g2">
+      <div class="field" style="grid-column:1/-1">
+        <label>Select Deal</label>
+        <select id="f-deal" onchange="onCRDealChange()" style="font-size:.84rem">${dealOpts}</select>
+      </div>
+      <div class="field"><label>Broker</label><input id="f-crbroker" readonly style="background:#f1f5f9" value="${esc(r?bName(r.brokerId):'')}" /></div>
+      <div class="field"><label>Total Commission (AED)</label><input id="f-totcomm" type="number" readonly style="background:#f1f5f9" value="${r?n(r.totalCommission).toFixed(2):''}"/></div>
+      <div class="field"><label>Amount Received (AED)</label><input id="f-amtrec" type="number" step="0.01" value="${r?n(r.amountReceived).toFixed(2):'0'}"/></div>
+      <div class="field"><label>Release Date</label><input type="date" id="f-reldate" value="${esc(r?.releaseDate||'')}"/></div>
+      <div class="field"><label>Status</label>
+        <select id="f-crstatus">
+          <option ${r?.status==='Pending'||!r?'selected':''}>Pending</option>
+          <option ${r?.status==='Paid'?'selected':''}>Paid</option>
+        </select>
+      </div>
+      <div class="field" style="grid-column:1/-1"><label>Notes</label><textarea id="f-crnotes" style="height:60px;resize:vertical">${esc(r?.notes||'')}</textarea></div>
+    </div>
+    <div class="comm-box">Balance Remaining: <span id="cr-balance-preview">${fmtAED(r?n(r.totalCommission)-n(r.amountReceived):0)}</span></div>
+    <div class="save-bar">
+      ${id ? `<button class="btn btn-delete" onclick="deleteRecord('commission_release',${id},'commission release')" style="margin-right:auto">🗑️ Delete</button>` : ''}
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="save-btn" onclick="saveCR(${id||0})">💾 Save</button>
+    </div>`);
+
+  // populate on load if editing
+  if(r) updateCRBalance();
+  else onCRDealChange();
+
+  document.getElementById('f-amtrec').addEventListener('input', updateCRBalance);
+};
+
+window.onCRDealChange = function(){
+  const sel = document.getElementById('f-deal')?.value;
+  if(!sel) return;
+  const [table, dealId, brokerId, comm] = sel.split('|');
+  const brokerEl = document.getElementById('f-crbroker');
+  const commEl   = document.getElementById('f-totcomm');
+  if(brokerEl) brokerEl.value = bName(brokerId);
+  if(commEl)   commEl.value  = parseFloat(comm).toFixed(2);
+  updateCRBalance();
+};
+
+window.updateCRBalance = function(){
+  const comm = n(document.getElementById('f-totcomm')?.value);
+  const rec  = n(document.getElementById('f-amtrec')?.value);
+  const el   = document.getElementById('cr-balance-preview');
+  if(el) el.textContent = fmtAED(comm - rec);
+};
+
+window.saveCR = async function(id){
+  const btn = document.getElementById('save-btn'); btn.disabled=true; btn.textContent='Saving…';
+  try {
+    const sel = document.getElementById('f-deal')?.value||'';
+    const [dealTable, dealId, brokerId] = sel.split('|');
+    const dealIdNum = n(dealId);
+    const brokerIdNum = n(brokerId);
+    const totalComm   = n(g('f-totcomm'));
+    const amtRec      = n(g('f-amtrec'));
+    const relDate     = g('f-reldate');
+    const status      = g('f-crstatus');
+    const notes       = g('f-crnotes');
+
+    // Get project name from deal
+    let projectName = g('f-crbroker'); // fallback
+    if(dealTable==='offplan'){
+      const d = DATA.offplan.find(x=>n(x.id)===dealIdNum);
+      if(d) projectName = `${d.project} - ${d.unit}`;
+    } else if(dealTable==='secondary'){
+      const d = DATA.secondary.find(x=>n(x.id)===dealIdNum);
+      if(d) projectName = `${d.property} ${d.propNo}`;
+    } else if(dealTable==='rental'){
+      const d = DATA.rental.find(x=>n(x.id)===dealIdNum);
+      if(d) projectName = `${d.property} ${d.propNo}`;
+    }
+
+    if(id){
+      await q('UPDATE commission_release SET brokerId=?,dealTable=?,dealId=?,projectName=?,totalCommission=?,amountReceived=?,releaseDate=?,status=?,notes=? WHERE id=?',
+        [brokerIdNum, dealTable, dealIdNum, projectName, totalComm, amtRec, relDate, status, notes, id]);
+    } else {
+      await q('INSERT INTO commission_release (brokerId,dealTable,dealId,projectName,totalCommission,amountReceived,releaseDate,status,notes) VALUES (?,?,?,?,?,?,?,?,?)',
+        [brokerIdNum, dealTable, dealIdNum, projectName, totalComm, amtRec, relDate, status, notes]);
+    }
+    await reload('commission_release');
+    closeModal();
+    renderCommissionRelease(document.getElementById('page-content'));
+  } catch(e){ alert('Error: '+e.message); }
+  finally{ btn.disabled=false; }
+};
+
 function renderSettings(pc){
   pc.innerHTML=`<div class="page-title" style="margin-bottom:20px">Settings</div>
   <div class="card" style="max-width:560px">
@@ -815,6 +1224,36 @@ function viewGrid(items){ return `<div class="view-grid">${items.map(([k,v])=>`<
 
 // ─── START ────────────────────────────────────────────────────────────────────
 init();
+
+// ── DELETE ────────────────────────────────────────────────────────────────────
+window.deleteRecord = async function(table, id, label) {
+  if (!confirm('Are you sure you want to delete this ' + label + '? This cannot be undone.')) return;
+  const renderMap = {
+    brokers:    () => renderBrokers(document.getElementById('page-content')),
+    developers: () => renderDevelopers(document.getElementById('page-content')),
+    clients:    () => renderClients(document.getElementById('page-content')),
+    offplan:    () => renderOffplan(document.getElementById('page-content')),
+    secondary:  () => renderSecondary(document.getElementById('page-content')),
+    rental:     () => renderRental(document.getElementById('page-content')),
+    commission_release: () => renderCommissionRelease(document.getElementById('page-content')),
+  };
+  try {
+    await q(`DELETE FROM ${table} WHERE id=${id}`);
+    await reload(table);
+    closeModal();
+    renderMap[table]();
+  } catch(e) {
+    alert('Delete failed: ' + e.message);
+  }
+};
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
 </script>
 </body>
 </html>
