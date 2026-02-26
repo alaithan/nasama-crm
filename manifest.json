@@ -1,0 +1,25 @@
+{
+  "name": "Nasama Properties CRM",
+  "short_name": "Nasama CRM",
+  "description": "Nasama Properties Real Estate CRM — Dubai",
+  "start_url": "/nasama-crm/",
+  "scope": "/nasama-crm/",
+  "display": "standalone",
+  "background_color": "#0A1628",
+  "theme_color": "#0A1628",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
