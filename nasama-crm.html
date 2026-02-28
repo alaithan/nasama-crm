@@ -299,10 +299,21 @@
     </div>
     <div class="login-body">
       <div class="field" style="margin-bottom:14px"><label>Username</label><input id="li-user" placeholder="e.g. admin" autocomplete="off"/></div>
-      <div class="field" style="margin-bottom:18px"><label>Password</label><input id="li-pass" type="password" placeholder="e.g. admin123"/></div>
+      <div class="field" style="margin-bottom:18px">
+        <label>Password</label>
+        <div style="position:relative">
+          <input id="li-pass" type="password" placeholder="Enter your password" style="padding-right:40px"/>
+          <button type="button" onclick="togglePwVisibility()" id="pw-eye-btn" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:0;font-size:1.1rem;color:#94a3b8;line-height:1" title="Show/hide password">
+            <span id="pw-eye-icon">👁</span>
+          </button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:18px">
+        <input type="checkbox" id="li-remember" style="width:15px;height:15px;accent-color:var(--gold);cursor:pointer"/>
+        <label for="li-remember" style="font-size:.82rem;color:#64748b;cursor:pointer;margin:0;font-weight:500">Remember me</label>
+      </div>
       <div id="li-err" class="login-err hidden"></div>
       <button class="btn btn-primary" style="width:100%;justify-content:center;padding:12px" onclick="doLogin()">Sign In →</button>
-      <div class="login-hint"><b>Alaithan</b> · <b>Ahmad</b> · <b>Nisadi</b> — all use password <b>Nasama123</b></div>
     </div>
   </div>
 </div>
@@ -543,8 +554,19 @@ function hide(id){ document.getElementById(id)?.classList.add("hidden"); }
 window.doLogin = function() {
   const u = document.getElementById("li-user").value.trim();
   const p = document.getElementById("li-pass").value;
+  const remember = document.getElementById("li-remember")?.checked;
   const usr = USERS.find(x=>x.username===u&&x.password===p);
   if (!usr) { const e=document.getElementById("li-err"); e.textContent="Invalid credentials. Please check your username and password."; e.classList.remove("hidden"); return; }
+  // Save or clear remembered credentials
+  if(remember){
+    localStorage.setItem("nasama_remember_user", u);
+    localStorage.setItem("nasama_remember_pass", p);
+    localStorage.setItem("nasama_remember", "1");
+  } else {
+    localStorage.removeItem("nasama_remember_user");
+    localStorage.removeItem("nasama_remember_pass");
+    localStorage.removeItem("nasama_remember");
+  }
   CU = usr;
   hide("login-screen");
   buildApp();
@@ -552,9 +574,43 @@ window.doLogin = function() {
 };
 document.getElementById("li-pass").addEventListener("keydown", e=>{ if(e.key==="Enter") window.doLogin(); });
 
+// Auto-fill remembered credentials on load
+(function(){
+  if(localStorage.getItem("nasama_remember")==="1"){
+    const ru = localStorage.getItem("nasama_remember_user");
+    const rp = localStorage.getItem("nasama_remember_pass");
+    if(ru) document.getElementById("li-user").value = ru;
+    if(rp) document.getElementById("li-pass").value = rp;
+    const cb = document.getElementById("li-remember");
+    if(cb) cb.checked = true;
+  }
+})();
+
+// Toggle password visibility
+window.togglePwVisibility = function() {
+  const inp = document.getElementById("li-pass");
+  const icon = document.getElementById("pw-eye-icon");
+  if(inp.type === "password") {
+    inp.type = "text";
+    icon.textContent = "🙈";
+  } else {
+    inp.type = "password";
+    icon.textContent = "👁";
+  }
+};
+
 window.logout = function() {
   CU=null; hide("app"); show("login-screen");
-  document.getElementById("li-user").value=""; document.getElementById("li-pass").value="";
+  // Don't clear fields if remember-me was set
+  if(localStorage.getItem("nasama_remember")!=="1"){
+    document.getElementById("li-user").value="";
+    document.getElementById("li-pass").value="";
+  }
+  // Reset password visibility
+  const inp = document.getElementById("li-pass");
+  const icon = document.getElementById("pw-eye-icon");
+  if(inp) inp.type = "password";
+  if(icon) icon.textContent = "👁";
 };
 
 window.toggleSidebar = function() {
@@ -1560,14 +1616,28 @@ function renderSettings(pc){
       <button class="btn btn-primary" style="padding:10px 20px">💾 Save Settings</button>
     </div>
 
+    ${isAdmin ? `<!-- Change Admin Password -->
+    <div class="card" style="max-width:640px;margin-bottom:20px;border-left:4px solid var(--gold)">
+      <div style="font-weight:700;margin-bottom:4px">🔐 Change Admin Password</div>
+      <div style="font-size:.8rem;color:#64748b;margin-bottom:16px">Update your administrator account password.</div>
+      <div class="g2" style="margin-bottom:16px">
+        <div class="field"><label>Current Password</label><input id="ap-current" type="password" placeholder="Enter current password" autocomplete="current-password"/></div>
+        <div class="field" style="grid-column:1/-1"><label>New Password</label><input id="ap-new" type="password" placeholder="Enter new password" autocomplete="new-password"/></div>
+        <div class="field" style="grid-column:1/-1"><label>Confirm New Password</label><input id="ap-confirm" type="password" placeholder="Confirm new password"/></div>
+      </div>
+      <div id="ap-err" style="color:#ef4444;font-size:.8rem;margin-bottom:10px;display:none"></div>
+      <div id="ap-ok" style="color:#16a34a;font-size:.8rem;margin-bottom:10px;display:none">✅ Password changed successfully!</div>
+      <button class="btn btn-primary" style="padding:10px 24px" onclick="doChangeAdminPw()">🔐 Change Password</button>
+    </div>
+
     <!-- User Access Management -->
     <div style="max-width:760px">
       <div style="font-weight:700;font-size:1rem;margin-bottom:4px;color:var(--fg)">👥 User Access Management</div>
-      <div style="font-size:.8rem;color:#64748b;margin-bottom:16px">${isAdmin?'Configure table access and action permissions for each user.':'Contact an administrator to change permissions.'}</div>
+      <div style="font-size:.8rem;color:#64748b;margin-bottom:16px">Configure table access and action permissions for each user.</div>
       <div id="user-cards-container">
         ${USERS.map((u,i)=>userCard(u,i)).join('')}
       </div>
-    </div>`;
+    </div>` : ''}`;
 }
 
 // Permission toggle (admin only)
@@ -1658,6 +1728,27 @@ window.doResetPw = function(idx) {
   setTimeout(()=>toast.remove(),3000);
 };
 
+
+window.doChangeAdminPw = function() {
+  const cur  = document.getElementById('ap-current')?.value || '';
+  const np   = document.getElementById('ap-new')?.value || '';
+  const cp   = document.getElementById('ap-confirm')?.value || '';
+  const errEl = document.getElementById('ap-err');
+  const okEl  = document.getElementById('ap-ok');
+  errEl.style.display = 'none';
+  okEl.style.display  = 'none';
+  const adminIdx = USERS.findIndex(u => u.username === CU.username);
+  if(adminIdx === -1) return;
+  if(cur !== USERS[adminIdx].password){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
+  if(np.length < 6){ errEl.textContent='New password must be at least 6 characters.'; errEl.style.display='block'; return; }
+  if(np !== cp){ errEl.textContent='New passwords do not match.'; errEl.style.display='block'; return; }
+  USERS[adminIdx].password = np;
+  CU = USERS[adminIdx];
+  document.getElementById('ap-current').value = '';
+  document.getElementById('ap-new').value = '';
+  document.getElementById('ap-confirm').value = '';
+  okEl.style.display = 'block';
+};
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 const g   = id => document.getElementById(id)?.value ?? "";
