@@ -94,6 +94,10 @@
   .save-bar{display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid #e4ebf5;justify-content:flex-end}
   .comm-box{margin-top:12px;padding:11px 14px;background:#f0fdf4;border-radius:9px;border:1px solid #bbf7d0;font-size:.9rem}
   .comm-box span{font-weight:800;color:#15803d}
+  .audit-lbl{font-size:.67rem;color:#94a3b8;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+  .audit-val{font-size:.82rem;color:#1e293b;font-weight:500}
+  .btn-export{background:#f0fdf4;color:#15803d;border:1px solid #86efac;font-size:.78rem;padding:6px 13px;gap:5px}
+  .btn-export:hover{background:#dcfce7}
   /* Page header */
   .page-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
   .page-title{font-size:1.4rem;font-weight:800;color:var(--dark)}
@@ -277,6 +281,20 @@
   .mono{font-family:monospace;font-size:.79rem;color:#64748b}
   /* note box */
   .note-box{margin-top:14px;background:#fef9c3;border-radius:8px;padding:10px 14px;font-size:.85rem}
+
+/* ─── RECEIPT PRINT STYLES ────────────────────────────────────────────── */
+@media print {
+  body > *:not(#receipt-overlay) { display: none !important; }
+  #receipt-overlay { position: static !important; background: white !important; }
+  #receipt-modal-box { box-shadow: none !important; border: none !important; }
+  #receipt-print-area { display: block !important; }
+  .receipt-no-print { display: none !important; }
+  @page { margin: 0; size: A4; }
+}
+
+
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+#refresh-icon { display:inline-block; }
 </style>
 </head>
 <body>
@@ -343,6 +361,7 @@
         <span id="topbar-date" style="color:#64748b;font-size:.82rem"></span>
       </div>
       <div style="display:flex;align-items:center;gap:10px">
+        <button id="refresh-btn" onclick="refreshData()" title="Refresh all data from database" style="background:none;border:1px solid #e2e8f0;border-radius:8px;padding:5px 12px;cursor:pointer;font-size:.8rem;color:#64748b;display:flex;align-items:center;gap:5px;transition:all .2s"><span id="refresh-icon">🔄</span> Refresh</button>
         <span class="chip chip-green">🟢 Turso DB</span>
         <span id="role-chip" class="chip chip-blue"></span>
         <div id="avatar" style="width:32px;height:32px;background:linear-gradient(135deg,var(--gold),#b8942e);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:.85rem"></div>
@@ -383,24 +402,37 @@ async function batch(stmts) {
 // ─── SCHEMA + SEED ────────────────────────────────────────────────────────────
 async function initDB() {
   await batch([
-    { sql: `CREATE TABLE IF NOT EXISTS brokers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, nationality TEXT, contact TEXT, rera TEXT, reraExpiry TEXT, status TEXT DEFAULT 'Active', createdAt TEXT DEFAULT (datetime('now')))` },
+    { sql: `CREATE TABLE IF NOT EXISTS brokers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, nationality TEXT, contact TEXT, email TEXT, rera TEXT, reraExpiry TEXT, status TEXT DEFAULT 'Active', createdAt TEXT DEFAULT (datetime('now')))` },
     { sql: `CREATE TABLE IF NOT EXISTS developers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, agreement TEXT DEFAULT 'No', agreementExpiry TEXT, status TEXT DEFAULT 'Active', createdAt TEXT DEFAULT (datetime('now')))` },
     { sql: `CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, nationality TEXT, contact TEXT, email TEXT, type TEXT, createdAt TEXT DEFAULT (datetime('now')))` },
     { sql: `CREATE TABLE IF NOT EXISTS offplan (id INTEGER PRIMARY KEY AUTOINCREMENT, brokerId INTEGER, clientId INTEGER, developerId INTEGER, status TEXT DEFAULT 'Pending', project TEXT, unit TEXT, price REAL, commPct REAL, invoiceNo TEXT, date TEXT, aml TEXT DEFAULT 'No', kycSent TEXT DEFAULT 'No', kycReceived TEXT DEFAULT 'No', notes TEXT, createdAt TEXT DEFAULT (datetime('now')))` },
     { sql: `CREATE TABLE IF NOT EXISTS secondary (id INTEGER PRIMARY KEY AUTOINCREMENT, brokerId INTEGER, buyerId INTEGER, sellerId INTEGER, developerId INTEGER, status TEXT DEFAULT 'Pending', property TEXT, propNo TEXT, contract TEXT, price REAL, sellerPct REAL, buyerPct REAL, discount REAL DEFAULT 0, invoiceNo TEXT, date TEXT, amlBuyer TEXT DEFAULT 'No', amlSeller TEXT DEFAULT 'No', kycSent TEXT DEFAULT 'No', kycReceived TEXT DEFAULT 'No', createdAt TEXT DEFAULT (datetime('now')))` },
     { sql: `CREATE TABLE IF NOT EXISTS rental (id INTEGER PRIMARY KEY AUTOINCREMENT, brokerId INTEGER, clientId INTEGER, status TEXT DEFAULT 'Active', property TEXT, propNo TEXT, contractType TEXT DEFAULT 'Annual', rent REAL, commPct REAL, invoiceNo TEXT, dateRented TEXT, startDate TEXT, endDate TEXT, pfExpert TEXT DEFAULT 'No', notes TEXT, createdAt TEXT DEFAULT (datetime('now')))` },
     { sql: `CREATE TABLE IF NOT EXISTS commission_release (id INTEGER PRIMARY KEY AUTOINCREMENT, brokerId INTEGER, dealTable TEXT, dealId INTEGER, projectName TEXT, totalCommission REAL, amountReceived REAL DEFAULT 0, releaseDate TEXT, status TEXT DEFAULT 'Pending', notes TEXT, brokerPct REAL DEFAULT 50, companyPct REAL DEFAULT 50, createdAt TEXT DEFAULT (datetime('now')))` },
+    { sql: `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, role TEXT DEFAULT 'User', name TEXT, brokerId INTEGER, perms TEXT, createdAt TEXT DEFAULT (datetime('now')))` },
+    { sql: `CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT DEFAULT (datetime('now')), username TEXT, role TEXT, action TEXT, tableName TEXT, recordId INTEGER, summary TEXT)` },
   ]);
-  // Migrate existing table — add split columns if not yet present
+  // Migrate existing tables — add columns if not yet present
   try { await q(`ALTER TABLE commission_release ADD COLUMN brokerPct REAL DEFAULT 50`); } catch(e){}
   try { await q(`ALTER TABLE commission_release ADD COLUMN companyPct REAL DEFAULT 50`); } catch(e){}
+  // Seed default users if users table is empty
+  const userCnt = await q("SELECT COUNT(*) as c FROM users");
+  if (Number(userCnt[0].c) === 0) {
+    const adminPerms = JSON.stringify({ tables:{dashboard:true,brokers:true,developers:true,clients:true,offplan:true,secondary:true,rental:true,reports:true,commission_release:true}, canAdd:true,canEdit:true,canDelete:true,canResetPw:true });
+    const defaultPerms = JSON.stringify({ tables:{dashboard:true,brokers:false,developers:false,clients:true,offplan:true,secondary:true,rental:true,reports:false,commission_release:false}, canAdd:false,canEdit:false,canDelete:false,canResetPw:false });
+    await batch([
+      { sql: `INSERT INTO users (username,password,role,name,brokerId,perms) VALUES ('Alaithan','Nasama123','Admin','Alaithan',null,?)`, args: [adminPerms] },
+      { sql: `INSERT INTO users (username,password,role,name,brokerId,perms) VALUES ('Ahmad','Nasama123','User','Ahmad',null,?)`, args: [defaultPerms] },
+      { sql: `INSERT INTO users (username,password,role,name,brokerId,perms) VALUES ('Nisadi','Nasama123','User','Nisadi',null,?)`, args: [defaultPerms] },
+    ]);
+  }
   const cnt = await q("SELECT COUNT(*) as c FROM brokers");
   if (Number(cnt[0].c) === 0) {
     await batch([
-      { sql: `INSERT INTO brokers (name,nationality,contact,rera,reraExpiry,status) VALUES ('Ahmed Al Mansouri','UAE','+971 50 123 4567','RERA-2024-001','2025-12-31','Active')` },
-      { sql: `INSERT INTO brokers (name,nationality,contact,rera,reraExpiry,status) VALUES ('Sarah Johnson','UK','+971 55 987 6543','RERA-2024-002','2025-03-15','Active')` },
-      { sql: `INSERT INTO brokers (name,nationality,contact,rera,reraExpiry,status) VALUES ('Mohammed Al Rashid','UAE','+971 52 456 7890','RERA-2024-003','2025-08-20','Active')` },
-      { sql: `INSERT INTO brokers (name,nationality,contact,rera,reraExpiry,status) VALUES ('Priya Sharma','India','+971 56 321 0987','RERA-2023-015','2024-11-30','Inactive')` },
+      { sql: `INSERT INTO brokers (name,nationality,contact,email,rera,reraExpiry,status) VALUES ('Ahmed Al Mansouri','UAE','+971 50 123 4567','ahmed@example.com','RERA-2024-001','2025-12-31','Active')` },
+      { sql: `INSERT INTO brokers (name,nationality,contact,email,rera,reraExpiry,status) VALUES ('Sarah Johnson','UK','+971 55 987 6543','sarah@example.com','RERA-2024-002','2025-03-15','Active')` },
+      { sql: `INSERT INTO brokers (name,nationality,contact,email,rera,reraExpiry,status) VALUES ('Mohammed Al Rashid','UAE','+971 52 456 7890','mohammed@example.com','RERA-2024-003','2025-08-20','Active')` },
+      { sql: `INSERT INTO brokers (name,nationality,contact,email,rera,reraExpiry,status) VALUES ('Priya Sharma','India','+971 56 321 0987','priya@example.com','RERA-2023-015','2024-11-30','Inactive')` },
       { sql: `INSERT INTO developers (name,agreement,agreementExpiry,status) VALUES ('Emaar Properties','Yes','2026-06-30','Active')` },
       { sql: `INSERT INTO developers (name,agreement,agreementExpiry,status) VALUES ('Damac Properties','Yes','2025-12-31','Active')` },
       { sql: `INSERT INTO developers (name,agreement,agreementExpiry,status) VALUES ('Nakheel','Yes','2025-09-15','Active')` },
@@ -426,20 +458,30 @@ async function initDB() {
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-const fmt    = n => new Intl.NumberFormat("en-AE").format(Math.round(Number(n)||0));
-const fmtAED = n => `AED ${fmt(n)}`;
-const today  = new Date();
-const daysUntil = d => { if(!d)return 9999; return Math.ceil((new Date(d)-today)/86400000); };
-const commOP  = d => (n(d.price)*n(d.commPct))/100;
-const commSel = d => (n(d.price)*n(d.sellerPct))/100;
-const commBuy = d => (n(d.price)*n(d.buyerPct))/100;
-const commSec = d => commSel(d)+commBuy(d)-n(d.discount);
-const commR   = d => (n(d.rent)*n(d.commPct))/100;
-const commVAT = d => commR(d)*0.05;
-const commRT  = d => commR(d)+commVAT(d);
-const n = v => Number(v)||0;
-const id3 = (pre,id) => `${pre}-${String(id).padStart(3,"0")}`;
-const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+// n() — coerce to finite number; Number(v)||0 misses n(0) edge case — use isFinite
+const n = v => { const x = Number(v); return isFinite(x) ? x : 0; };
+
+// esc() — explicitly handle null/undefined before String() to avoid "null"/"undefined" in UI
+const esc = s => (s == null ? "" : String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+
+// fmt / fmtAED — pass through n() so non-numeric values render as "0" not "NaN"
+const fmt    = v => new Intl.NumberFormat("en-AE").format(Math.round(n(v)));
+const fmtAED = v => `AED ${fmt(v)}`;
+
+const today  = new Date(); today.setHours(0,0,0,0);
+const daysUntil = d => { if(!d) return 9999; const ms = new Date(d) - today; return isNaN(ms) ? 9999 : Math.ceil(ms/86400000); };
+
+// id3 — guard against null/undefined id producing "null-000" or "undefined-000"
+const id3 = (pre, id) => `${pre}-${id != null ? String(id).padStart(3,"0") : "???"}`;
+
+// comm helpers — guard against null/undefined deal object with optional chaining
+const commOP  = d => d ? (n(d.price)  * n(d.commPct))  / 100 : 0;
+const commSel = d => d ? (n(d.price)  * n(d.sellerPct)) / 100 : 0;
+const commBuy = d => d ? (n(d.price)  * n(d.buyerPct))  / 100 : 0;
+const commSec = d => d ? commSel(d) + commBuy(d) - n(d.discount) : 0;
+const commR   = d => d ? (n(d.rent)   * n(d.commPct))  / 100 : 0;
+const commVAT = d => commR(d) * 0.05;
+const commRT  = d => commR(d) + commVAT(d);
 
 const BADGE = {
   // General
@@ -462,28 +504,34 @@ const BADGE = {
   "Ejari Signed":      "b-teal",
   "Renewed":           "b-lime",
 };
-const badge = v => `<span class="badge ${BADGE[v]||'b-gray'}">${esc(v)}</span>`;
+const badge = v => { const s = v != null ? String(v) : ""; return `<span class="badge ${BADGE[s]||'b-gray'}">${esc(s)||"—"}</span>`; };
 
-const renewalDate = d => { if(!d.endDate)return "—"; const e=new Date(d.endDate); e.setDate(e.getDate()-90); return e.toISOString().split("T")[0]; };
+const renewalDate = d => { if(!d || !d.endDate) return "—"; const e=new Date(d.endDate); if(isNaN(e)) return "—"; e.setDate(e.getDate()-90); return e.toISOString().split("T")[0]; };
 
 // ─── APP STATE ────────────────────────────────────────────────────────────────
 let CU = null; // current user
 let DATA = { brokers:[], developers:[], clients:[], offplan:[], secondary:[], rental:[], commission_release:[] };
 
 // ─── PERMISSION SYSTEM ────────────────────────────────────────────────────────
-const ALL_TABLES = ["dashboard","brokers","developers","clients","offplan","secondary","rental","reports","commission_release"];
+const ALL_TABLES = ["dashboard","brokers","developers","clients","offplan","secondary","rental","reports","commission_release","audit_log"];
 const DEFAULT_PERMS = {
-  tables:   { dashboard:true, brokers:false, developers:false, clients:true, offplan:true, secondary:true, rental:true, reports:false, commission_release:false },
+  tables:   { dashboard:true, brokers:false, developers:false, clients:true, offplan:true, secondary:true, rental:true, reports:false, commission_release:false, audit_log:false },
   canAdd:false, canEdit:false, canDelete:false, canResetPw:false,
 };
-let USERS = [
-  { username:"Alaithan", password:"Nasama123", role:"Admin", name:"Alaithan", brokerId:null,
-    perms:{ tables:{dashboard:true,brokers:true,developers:true,clients:true,offplan:true,secondary:true,rental:true,reports:true,commission_release:true}, canAdd:true,canEdit:true,canDelete:true,canResetPw:true } },
-  { username:"Ahmad",   password:"Nasama123", role:"User",  name:"Ahmad",   brokerId:null, perms:JSON.parse(JSON.stringify(DEFAULT_PERMS)) },
-  { username:"Nisadi",  password:"Nasama123", role:"User",  name:"Nisadi",  brokerId:null, perms:JSON.parse(JSON.stringify(DEFAULT_PERMS)) },
-];
+let USERS = []; // Loaded from Turso users table on startup
 function canDo(action){ if(!CU) return false; if(CU.role==="Admin") return true; return !!CU.perms?.[action]; }
 function canSeeTable(key){ if(!CU) return false; if(CU.role==="Admin") return true; return !!CU.perms?.tables?.[key]; }
+
+// ─── AUDIT LOG HELPER ─────────────────────────────────────────────────────────
+async function auditLog(action, tableName, recordId, summary) {
+  if(!CU) return;
+  try {
+    await q(
+      `INSERT INTO audit_log (ts,username,role,action,tableName,recordId,summary) VALUES (datetime('now'),?,?,?,?,?,?)`,
+      [CU.username, CU.role, action, tableName, recordId||null, summary||'']
+    );
+  } catch(e) { console.warn('Audit log failed:', e.message); }
+}
 
 const NAV = [
   { key:"dashboard", label:"Dashboard",  icon:"🏠" },
@@ -495,6 +543,7 @@ const NAV = [
   { key:"rental",    label:"Rental",     icon:"🏠" },
   { key:"reports",   label:"Reports",    icon:"📊" },
   { key:"commission_release", label:"Commission Release", icon:"💰" },
+  { key:"audit_log", label:"Audit Log",  icon:"🔍" },
   { key:"settings",  label:"Settings",   icon:"⚙️" },
 ];
 
@@ -524,7 +573,7 @@ async function init() {
 function setMsg(t) { document.getElementById("loading-msg").textContent = t; }
 
 async function loadAll() {
-  const [b,dev,c,op,sec,ren,cr] = await Promise.all([
+  const [b,dev,c,op,sec,ren,cr,usr] = await Promise.all([
     q("SELECT * FROM brokers ORDER BY id"),
     q("SELECT * FROM developers ORDER BY id"),
     q("SELECT * FROM clients ORDER BY id"),
@@ -532,6 +581,7 @@ async function loadAll() {
     q("SELECT * FROM secondary ORDER BY id DESC"),
     q("SELECT * FROM rental ORDER BY id DESC"),
     q("SELECT * FROM commission_release ORDER BY id DESC"),
+    q("SELECT * FROM users ORDER BY id"),
   ]);
   DATA.brokers             = b.map(r=>({...r}));
   DATA.developers          = dev.map(r=>({...r}));
@@ -540,6 +590,10 @@ async function loadAll() {
   DATA.secondary           = sec.map(r=>({...r}));
   DATA.rental              = ren.map(r=>({...r}));
   DATA.commission_release  = cr.map(r=>({...r}));
+  USERS = usr.map(r=>({
+    ...r,
+    perms: r.perms ? (typeof r.perms === 'string' ? JSON.parse(r.perms) : r.perms) : JSON.parse(JSON.stringify(DEFAULT_PERMS)),
+  }));
 }
 
 async function reload(table) {
@@ -557,16 +611,16 @@ window.doLogin = function() {
   const remember = document.getElementById("li-remember")?.checked;
   const usr = USERS.find(x=>x.username===u&&x.password===p);
   if (!usr) { const e=document.getElementById("li-err"); e.textContent="Invalid credentials. Please check your username and password."; e.classList.remove("hidden"); return; }
-  // Save or clear remembered credentials
+  // Save or clear remembered username only (never store password in localStorage)
   if(remember){
     localStorage.setItem("nasama_remember_user", u);
-    localStorage.setItem("nasama_remember_pass", p);
     localStorage.setItem("nasama_remember", "1");
   } else {
     localStorage.removeItem("nasama_remember_user");
-    localStorage.removeItem("nasama_remember_pass");
     localStorage.removeItem("nasama_remember");
   }
+  // Remove any old stored passwords from previous versions
+  localStorage.removeItem("nasama_remember_pass");
   CU = usr;
   hide("login-screen");
   buildApp();
@@ -574,13 +628,11 @@ window.doLogin = function() {
 };
 document.getElementById("li-pass").addEventListener("keydown", e=>{ if(e.key==="Enter") window.doLogin(); });
 
-// Auto-fill remembered credentials on load
+// Auto-fill remembered username on load (password is never stored)
 (function(){
   if(localStorage.getItem("nasama_remember")==="1"){
     const ru = localStorage.getItem("nasama_remember_user");
-    const rp = localStorage.getItem("nasama_remember_pass");
     if(ru) document.getElementById("li-user").value = ru;
-    if(rp) document.getElementById("li-pass").value = rp;
     const cb = document.getElementById("li-remember");
     if(cb) cb.checked = true;
   }
@@ -668,7 +720,7 @@ window.goPage = function(key) {
   chartInstances={};
   const pc = document.getElementById("page-content");
   pc.innerHTML = "";
-  const pages = { dashboard:renderDashboard, brokers:renderBrokers, developers:renderDevelopers, clients:renderClients, offplan:renderOffplan, secondary:renderSecondary, rental:renderRental, reports:renderReports, commission_release:renderCommissionRelease, settings:renderSettings };
+  const pages = { dashboard:renderDashboard, brokers:renderBrokers, developers:renderDevelopers, clients:renderClients, offplan:renderOffplan, secondary:renderSecondary, rental:renderRental, reports:renderReports, commission_release:renderCommissionRelease, audit_log:renderAuditLog, settings:renderSettings };
   (pages[key]||renderDashboard)(pc);
 };
 
@@ -690,7 +742,7 @@ function renderDashboard(pc) {
   // Commission totals — all deals regardless of status
   const opComm  = offplan.reduce((s,d)=>s+commOP(d),0);
   const seComm  = secondary.reduce((s,d)=>s+commSec(d),0);
-  const reComm  = rental.reduce((s,d)=>s+commRT(d),0);
+  const reComm  = rental.reduce((s,d)=>s+commR(d),0); // excl. VAT
   const totalComm = opComm + seComm + reComm;
 
   // Purchase amount totals
@@ -741,7 +793,7 @@ function renderDashboard(pc) {
   });
   rental.forEach(d => {
     const m = getMonth(d.dateRented);
-    if (m >= 0) monthlyRE[m] += commRT(d);
+    if (m >= 0) monthlyRE[m] += commR(d); // excl. VAT
   });
 
   const monthlyTotal = MONTHS.map((_,i) => monthlyOP[i] + monthlySE[i] + monthlyRE[i]);
@@ -787,7 +839,7 @@ function renderDashboard(pc) {
   const pie={labels:["Off Plan","Secondary","Rental"],datasets:[{data:[offplan.length,secondary.length,rental.length],backgroundColor:[GOLD,"#2563EB","#10b981"],borderWidth:2,borderColor:"#fff"}]};
   chartInstances.pie = new Chart("ch-pie",{type:"doughnut",data:pie,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{font:{size:11}}}}}});
 
-  const bperf=brokers.map(b=>({ name:b.name.split(" ")[0], total: offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commOP(d),0)+secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commSec(d),0)+rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commRT(d),0) })).sort((a,b)=>b.total-a.total).filter(b=>b.total>0);
+  const bperf=brokers.map(b=>({ name:b.name.split(" ")[0], total: offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commOP(d),0)+secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commSec(d),0)+rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commR(d),0) })).sort((a,b)=>b.total-a.total).filter(b=>b.total>0);
   chartInstances.broker = new Chart("ch-broker",{type:"bar",data:{labels:bperf.map(b=>b.name),datasets:[{label:"Commission",data:bperf.map(b=>b.total),backgroundColor:GOLD,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`AED ${fmt(c.raw)}`}}},scales:{y:{ticks:{callback:v=>v>=1000?`${Math.round(v/1000)}K`:v}}}}});
 
   // Developer purchase value chart
@@ -834,7 +886,7 @@ function renderDashboard(pc) {
 function renderBrokers(pc) {
   const rows = DATA.brokers;
   pc.innerHTML = `
-    <div class="page-hdr"><div class="page-title">Brokers <small>(${rows.length})</small></div>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openBrokerForm(null)">+ Add Broker</button>`:""}</div>
+    <div class="page-hdr"><div class="page-title">Brokers <small>(${rows.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('brokers')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openBrokerForm(null)">+ Add Broker</button>`:""}</div></div>
     <div class="card">
       <div class="search-row"><div class="search-wrap"><span class="icon">🔍</span><input id="q-brokers" placeholder="Search brokers…" oninput="filterBrokers()"/></div></div>
       <div class="overflow"><table><thead><tr><th>Name</th><th>Nationality</th><th>Contact</th><th>RERA No.</th><th>RERA Expiry</th><th>Status</th><th>Alert</th><th>Actions</th></tr></thead>
@@ -875,10 +927,16 @@ window.openBrokerForm = function(id) {
 };
 window.saveBroker = async function(id) {
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
-  const vals=[g("f-name"),g("f-nat"),g("f-contact"),g("f-rera"),g("f-expiry"),g("f-status")];
+  const vals=[g("f-name"),g("f-nat"),g("f-contact"),g("f-bemail"),g("f-rera"),g("f-expiry"),g("f-status")];
   try {
-    if(id) await q("UPDATE brokers SET name=?,nationality=?,contact=?,rera=?,reraExpiry=?,status=? WHERE id=?",[...vals,id]);
-    else   await q("INSERT INTO brokers (name,nationality,contact,rera,reraExpiry,status) VALUES (?,?,?,?,?,?)",vals);
+    if(id) {
+      await q("UPDATE brokers SET name=?,nationality=?,contact=?,email=?,rera=?,reraExpiry=?,status=? WHERE id=?",[...vals,id]);
+      await auditLog('UPDATE','brokers',id,`Updated broker: ${vals[0]}`);
+    } else {
+      await q("INSERT INTO brokers (name,nationality,contact,email,rera,reraExpiry,status) VALUES (?,?,?,?,?,?,?)",vals);
+      const rows=await q("SELECT last_insert_rowid() as lid"); const newId=rows[0]?.lid||null;
+      await auditLog('CREATE','brokers',newId,`Created broker: ${vals[0]}`);
+    }
     await reload("brokers"); closeModal(); renderBrokers(document.getElementById("page-content"));
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
@@ -887,7 +945,7 @@ window.saveBroker = async function(id) {
 function renderDevelopers(pc) {
   const rows = DATA.developers;
   pc.innerHTML = `
-    <div class="page-hdr"><div class="page-title">Developers <small>(${rows.length})</small></div>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openDevForm(null)">+ Add Developer</button>`:""}</div>
+    <div class="page-hdr"><div class="page-title">Developers <small>(${rows.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('developers')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openDevForm(null)">+ Add Developer</button>`:""}</div></div>
     <div class="card">
       <div class="search-row"><div class="search-wrap"><span class="icon">🔍</span><input id="q-dev" placeholder="Search developers…" oninput="filterDevs()"/></div></div>
       <div class="overflow"><table><thead><tr><th>Developer Name</th><th>Agreement Signed</th><th>Agreement Expiry</th><th>Status</th><th>Alert</th><th>Actions</th></tr></thead>
@@ -924,8 +982,14 @@ window.saveDev=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
   const vals=[g("f-name"),g("f-agree"),g("f-expiry"),g("f-status")];
   try {
-    if(id) await q("UPDATE developers SET name=?,agreement=?,agreementExpiry=?,status=? WHERE id=?",[...vals,id]);
-    else   await q("INSERT INTO developers (name,agreement,agreementExpiry,status) VALUES (?,?,?,?)",vals);
+    if(id) {
+      await q("UPDATE developers SET name=?,agreement=?,agreementExpiry=?,status=? WHERE id=?",[...vals,id]);
+      await auditLog('UPDATE','developers',id,`Updated developer: ${vals[0]}`);
+    } else {
+      await q("INSERT INTO developers (name,agreement,agreementExpiry,status) VALUES (?,?,?,?)",vals);
+      const rows=await q("SELECT last_insert_rowid() as lid"); const newId=rows[0]?.lid||null;
+      await auditLog('CREATE','developers',newId,`Created developer: ${vals[0]}`);
+    }
     await reload("developers"); closeModal(); renderDevelopers(document.getElementById("page-content"));
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
@@ -934,7 +998,7 @@ window.saveDev=async function(id){
 function renderClients(pc){
   const rows=DATA.clients;
   pc.innerHTML=`
-    <div class="page-hdr"><div class="page-title">Clients <small>(${rows.length})</small></div>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openClientForm(null)">+ Add Client</button>`:""}</div>
+    <div class="page-hdr"><div class="page-title">Clients <small>(${rows.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('clients')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openClientForm(null)">+ Add Client</button>`:""}</div></div>
     <div class="card">
       <div class="search-row">
         <div class="search-wrap"><span class="icon">🔍</span><input id="q-cl" placeholder="Search clients…" oninput="filterClients()"/></div>
@@ -969,8 +1033,14 @@ window.saveClient=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
   const vals=[g("f-name"),g("f-nat"),g("f-contact"),g("f-email"),g("f-type")];
   try {
-    if(id) await q("UPDATE clients SET name=?,nationality=?,contact=?,email=?,type=? WHERE id=?",[...vals,id]);
-    else   await q("INSERT INTO clients (name,nationality,contact,email,type) VALUES (?,?,?,?,?)",vals);
+    if(id) {
+      await q("UPDATE clients SET name=?,nationality=?,contact=?,email=?,type=? WHERE id=?",[...vals,id]);
+      await auditLog('UPDATE','clients',id,`Updated client: ${vals[0]}`);
+    } else {
+      await q("INSERT INTO clients (name,nationality,contact,email,type) VALUES (?,?,?,?,?)",vals);
+      const rows=await q("SELECT last_insert_rowid() as lid"); const newId=rows[0]?.lid||null;
+      await auditLog('CREATE','clients',newId,`Created client: ${vals[0]}`);
+    }
     await reload("clients"); closeModal(); renderClients(document.getElementById("page-content"));
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
@@ -979,26 +1049,49 @@ window.saveClient=async function(id){
 function renderOffplan(pc){
   const raw = (CU.brokerId)?DATA.offplan.filter(d=>n(d.brokerId)===CU.brokerId):DATA.offplan;
   pc.innerHTML=`
-    <div class="page-hdr"><div class="page-title">Off Plan Deals <small>(${raw.length})</small></div>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openOPForm(null)">+ Add Deal</button>`:""}</div>
+    <div class="page-hdr"><div class="page-title">Off Plan Deals <small>(${raw.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('offplan')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openOPForm(null)">+ Add Deal</button>`:""}</div></div>
     <div class="card">
       <div class="search-row">
         <div class="search-wrap"><span class="icon">🔍</span><input id="q-op" placeholder="Search project, unit…" oninput="filterOP()"/></div>
         <select id="sf-op" style="width:200px" onchange="filterOP()"><option>All</option><option>EOI Paid</option><option>Booking Form Signed</option><option>First Payment Paid</option><option>Reservation Form Signed</option><option>SPA Sent</option><option>SPA Signed</option><option>Tax Invoice Sent</option><option>Commission Received</option><option>Cancelled</option></select>
       </div>
-      <div class="overflow"><table><thead><tr><th>ID</th><th>Broker</th><th>Client</th><th>Project</th><th>Unit</th><th>Developer</th><th>Price (AED)</th><th>Comm%</th><th>Commission</th><th>Date</th><th>Status</th><th>AML</th><th>KYC</th><th>Actions</th></tr></thead>
+      <div class="overflow"><table><thead><tr><th>ID</th><th>Broker</th><th>Client</th><th>Project</th><th>Unit</th><th>Developer</th><th>Price (AED)</th><th>Comm%</th><th>Commission</th><th>Date</th><th>Status</th><th>AML</th><th>KYC</th><th>Comm Release</th><th>Actions</th></tr></thead>
       <tbody id="tbody-op">${opRows(raw)}</tbody></table></div>
     </div>`;
 }
-function bName(id){ return DATA.brokers.find(b=>n(b.id)===n(id))?.name||"—"; }
-function cName(id){ return DATA.clients.find(c=>n(c.id)===n(id))?.name||"—"; }
-function dName(id){ return DATA.developers.find(d=>n(d.id)===n(id))?.name||"—"; }
-function opRows(rows){ return rows.map(d=>`<tr>
+// Lookup helpers — guard against null/undefined/falsy ids and return "—" for any miss
+function bName(id){ if(id == null || id === "" || !DATA.brokers?.length)  return "—"; return DATA.brokers.find(b=>n(b.id)===n(id))?.name  || "—"; }
+function cName(id){ if(id == null || id === "" || !DATA.clients?.length)  return "—"; return DATA.clients.find(c=>n(c.id)===n(id))?.name  || "—"; }
+function dName(id){ if(id == null || id === "" || !DATA.developers?.length) return "—"; return DATA.developers.find(d=>n(d.id)===n(id))?.name || "—"; }
+
+// Returns the commission_release record (if any) linked to a deal
+function getCRForDeal(table, dealId) {
+  if (dealId == null) return null;
+  return DATA.commission_release.find(r => r.dealTable===table && n(r.dealId)===n(dealId)) || null;
+}
+// Inline badge showing commission release status for a deal row
+function crStatusBadge(table, dealId) {
+  const cr = getCRForDeal(table, dealId);
+  if (!cr) return `<span style="font-size:.68rem;color:#94a3b8;white-space:nowrap">—</span>`;
+  const isPaid = cr.status === 'Paid';
+  const color  = isPaid ? '#16a34a' : '#b45309';
+  const bg     = isPaid ? '#dcfce7' : '#fef3c7';
+  const border = isPaid ? '#86efac' : '#fde68a';
+  const icon   = isPaid ? '✅' : '⏳';
+  return `<span style="font-size:.68rem;background:${bg};color:${color};border:1px solid ${border};padding:2px 7px;border-radius:20px;white-space:nowrap;font-weight:700">${icon} ${isPaid?'Released':'Pending'}</span>`;
+}
+function opRows(rows){ return rows.map(d=>{
+  const cr = getCRForDeal('offplan', d.id);
+  const crBtn = canDo('canAdd') && !cr ? `<button class="btn" style="background:linear-gradient(135deg,#b8942e,var(--gold));color:#fff;border:none;font-size:.72rem;padding:4px 9px;white-space:nowrap" onclick="openCRForm(null,'offplan',${d.id})">💰 Release</button>` :
+    cr ? `<button class="btn btn-ghost" style="font-size:.72rem;padding:4px 9px;white-space:nowrap" onclick="openCRForm(${cr.id})">💰 View CR</button>` : '';
+  return `<tr>
   <td class="mono">${id3("OP",d.id)}</td><td>${esc(bName(d.brokerId))}</td><td>${esc(cName(d.clientId))}</td>
   <td><b>${esc(d.project)}</b></td><td>${esc(d.unit)}</td><td>${esc(dName(d.developerId))}</td>
   <td style="font-weight:600">${fmt(d.price)}</td><td>${d.commPct}%</td><td style="color:var(--gold);font-weight:700">${fmt(commOP(d))}</td>
   <td>${esc(d.date)}</td><td>${badge(d.status)}</td><td>${badge(d.aml)}</td><td>${badge(d.kycReceived)}</td>
-  <td style="white-space:nowrap"><button class="btn btn-ghost" onclick='viewOP(${d.id})' style="padding:5px 10px">👁</button> ${canDo('canEdit')?`<button class="btn btn-edit" onclick='openOPForm(${d.id})'>✏️ Edit</button>`:''}</td>
-</tr>`).join("")||`<tr><td colspan="14" style="text-align:center;color:#94a3b8;padding:24px">No records</td></tr>`; }
+  <td>${crStatusBadge('offplan',d.id)}</td>
+  <td style="white-space:nowrap;display:flex;gap:4px;align-items:center"><button class="btn btn-ghost" onclick='viewOP(${d.id})' style="padding:5px 10px">👁</button> ${canDo('canEdit')?`<button class="btn btn-edit" onclick='openOPForm(${d.id})'>✏️ Edit</button>`:''} ${crBtn}</td>
+</tr>`;}).join("")||`<tr><td colspan="15" style="text-align:center;color:#94a3b8;padding:24px">No records</td></tr>`; }
 window.filterOP=function(){ const qv=(document.getElementById("q-op")?.value||"").toLowerCase(); const sf=document.getElementById("sf-op")?.value||"All"; const raw=(CU.brokerId)?DATA.offplan.filter(d=>n(d.brokerId)===CU.brokerId):DATA.offplan; document.getElementById("tbody-op").innerHTML=opRows(raw.filter(d=>(sf==="All"||d.status===sf)&&(d.project?.toLowerCase().includes(qv)||d.unit?.toLowerCase().includes(qv)))); };
 window.viewOP=function(id){ const d=DATA.offplan.find(x=>n(x.id)===n(id)); if(!d)return; openModal(`Off Plan — ${d.project}`, viewGrid([["Deal ID",id3("OP",d.id)],["Project",d.project],["Unit",d.unit],["Developer",dName(d.developerId)],["Broker",bName(d.brokerId)],["Client",cName(d.clientId)],["Price",fmtAED(d.price)],["Comm %",d.commPct+"%"],["Commission",fmtAED(commOP(d))],["Date",d.date],["Invoice",d.invoiceNo||"—"],["Status",d.status],["AML",d.aml],["KYC Sent",d.kycSent],["KYC Received",d.kycReceived]])+`${d.notes?`<div class="note-box"><b>Notes:</b> ${esc(d.notes)}</div>`:""}<div class="save-bar"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>`); };
 window.openOPForm=function(id){
@@ -1041,8 +1134,14 @@ window.saveOP=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
   try {
     const vals=[g("f-broker"),g("f-client"),g("f-dev"),g("f-status"),g("f-project"),g("f-unit"),n(g("f-price")),n(g("f-comm")),g("f-inv"),g("f-date"),g("f-aml"),g("f-kycs"),g("f-kycr"),g("f-notes")];
-    if(id) await q("UPDATE offplan SET brokerId=?,clientId=?,developerId=?,status=?,project=?,unit=?,price=?,commPct=?,invoiceNo=?,date=?,aml=?,kycSent=?,kycReceived=?,notes=? WHERE id=?",[...vals,id]);
-    else   await q("INSERT INTO offplan (brokerId,clientId,developerId,status,project,unit,price,commPct,invoiceNo,date,aml,kycSent,kycReceived,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",vals);
+    if(id) {
+      await q("UPDATE offplan SET brokerId=?,clientId=?,developerId=?,status=?,project=?,unit=?,price=?,commPct=?,invoiceNo=?,date=?,aml=?,kycSent=?,kycReceived=?,notes=? WHERE id=?",[...vals,id]);
+      await auditLog('UPDATE','offplan',id,`Updated off plan deal: ${vals[4]} – ${vals[5]} (status: ${vals[3]})`);
+    } else {
+      await q("INSERT INTO offplan (brokerId,clientId,developerId,status,project,unit,price,commPct,invoiceNo,date,aml,kycSent,kycReceived,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",vals);
+      const rows=await q("SELECT last_insert_rowid() as lid"); const newId=rows[0]?.lid||null;
+      await auditLog('CREATE','offplan',newId,`Created off plan deal: ${vals[4]} – ${vals[5]} (AED ${n(vals[6]).toLocaleString()})`);
+    }
     await reload("offplan"); closeModal(); renderOffplan(document.getElementById("page-content"));
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
@@ -1051,23 +1150,28 @@ window.saveOP=async function(id){
 function renderSecondary(pc){
   const raw=(CU.brokerId)?DATA.secondary.filter(d=>n(d.brokerId)===CU.brokerId):DATA.secondary;
   pc.innerHTML=`
-    <div class="page-hdr"><div class="page-title">Secondary (Resale) Deals <small>(${raw.length})</small></div>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openSEForm(null)">+ Add Deal</button>`:""}</div>
+    <div class="page-hdr"><div class="page-title">Secondary (Resale) Deals <small>(${raw.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('secondary')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openSEForm(null)">+ Add Deal</button>`:""}</div></div>
     <div class="card">
       <div class="search-row"><div class="search-wrap"><span class="icon">🔍</span><input id="q-se" placeholder="Search property…" oninput="filterSE()"/></div><select id="sf-se" style="width:200px" onchange="filterSE()"><option>All</option><option>MOU Signed</option><option>Commission Received</option><option>Cancelled</option></select></div>
-      <div class="overflow"><table><thead><tr><th>ID</th><th>Broker</th><th>Buyer</th><th>Seller</th><th>Property</th><th>Price (AED)</th><th>Seller Comm</th><th>Buyer Comm</th><th>Discount</th><th>Total Comm</th><th>Date</th><th>Status</th><th>Actions</th></tr></thead>
+      <div class="overflow"><table><thead><tr><th>ID</th><th>Broker</th><th>Buyer</th><th>Seller</th><th>Property</th><th>Price (AED)</th><th>Seller Comm</th><th>Buyer Comm</th><th>Discount</th><th>Comm</th><th>Date</th><th>Status</th><th>Comm Release</th><th>Actions</th></tr></thead>
       <tbody id="tbody-se">${seRows(raw)}</tbody></table></div>
     </div>`;
 }
-function seRows(rows){ return rows.map(d=>`<tr>
+function seRows(rows){ return rows.map(d=>{
+  const cr = getCRForDeal('secondary', d.id);
+  const crBtn = canDo('canAdd') && !cr ? `<button class="btn" style="background:linear-gradient(135deg,#b8942e,var(--gold));color:#fff;border:none;font-size:.72rem;padding:4px 9px;white-space:nowrap" onclick="openCRForm(null,'secondary',${d.id})">💰 Release</button>` :
+    cr ? `<button class="btn btn-ghost" style="font-size:.72rem;padding:4px 9px;white-space:nowrap" onclick="openCRForm(${cr.id})">💰 View CR</button>` : '';
+  return `<tr>
   <td class="mono">${id3("SE",d.id)}</td><td>${esc(bName(d.brokerId))}</td><td>${esc(cName(d.buyerId))}</td><td>${esc(cName(d.sellerId))}</td>
   <td><b>${esc(d.property)}</b></td><td style="font-weight:600">${fmt(d.price)}</td>
   <td>${fmt(commSel(d))}</td><td>${fmt(commBuy(d))}</td><td>${d.discount?fmt(d.discount):"—"}</td>
   <td style="color:var(--gold);font-weight:700">${fmt(commSec(d))}</td>
   <td>${esc(d.date)}</td><td>${badge(d.status)}</td>
-  <td style="white-space:nowrap"><button class="btn btn-ghost" onclick='viewSE(${d.id})' style="padding:5px 10px">👁</button> ${canDo('canEdit')?`<button class="btn btn-edit" onclick='openSEForm(${d.id})'>✏️ Edit</button>`:''}</td>
-</tr>`).join("")||`<tr><td colspan="13" style="text-align:center;color:#94a3b8;padding:24px">No records</td></tr>`; }
+  <td>${crStatusBadge('secondary',d.id)}</td>
+  <td style="white-space:nowrap;display:flex;gap:4px;align-items:center"><button class="btn btn-ghost" onclick='viewSE(${d.id})' style="padding:5px 10px">👁</button> ${canDo('canEdit')?`<button class="btn btn-edit" onclick='openSEForm(${d.id})'>✏️ Edit</button>`:''} ${crBtn}</td>
+</tr>`;}).join("")||`<tr><td colspan="14" style="text-align:center;color:#94a3b8;padding:24px">No records</td></tr>`; }
 window.filterSE=function(){ const qv=(document.getElementById("q-se")?.value||"").toLowerCase(); const sf=document.getElementById("sf-se")?.value||"All"; const raw=(CU.brokerId)?DATA.secondary.filter(d=>n(d.brokerId)===CU.brokerId):DATA.secondary; document.getElementById("tbody-se").innerHTML=seRows(raw.filter(d=>(sf==="All"||d.status===sf)&&d.property?.toLowerCase().includes(qv))); };
-window.viewSE=function(id){ const d=DATA.secondary.find(x=>n(x.id)===n(id)); if(!d)return; openModal(`Resale — ${d.property}`,viewGrid([["ID",id3("SE",d.id)],["Property",d.property],["Prop No.",d.propNo],["Contract",d.contract],["Broker",bName(d.brokerId)],["Buyer",cName(d.buyerId)],["Seller",cName(d.sellerId)],["Price",fmtAED(d.price)],["Seller Comm %",d.sellerPct+"%"],["Buyer Comm %",d.buyerPct+"%"],["Discount",d.discount?fmtAED(d.discount):"None"],["Seller Comm",fmtAED(commSel(d))],["Buyer Comm",fmtAED(commBuy(d))],["Total Comm",fmtAED(commSec(d))],["AML Buyer",d.amlBuyer],["AML Seller",d.amlSeller],["KYC Sent",d.kycSent],["KYC Received",d.kycReceived],["Invoice No.",d.invoiceNo||"—"],["Status",d.status]])+`<div class="save-bar"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>`); };
+window.viewSE=function(id){ const d=DATA.secondary.find(x=>n(x.id)===n(id)); if(!d)return; openModal(`Resale — ${d.property}`,viewGrid([["ID",id3("SE",d.id)],["Property",d.property],["Prop No.",d.propNo],["Contract",d.contract],["Broker",bName(d.brokerId)],["Buyer",cName(d.buyerId)],["Seller",cName(d.sellerId)],["Price",fmtAED(d.price)],["Seller Comm %",d.sellerPct+"%"],["Buyer Comm %",d.buyerPct+"%"],["Discount",d.discount?fmtAED(d.discount):"None"],["Seller Comm",fmtAED(commSel(d))],["Buyer Comm",fmtAED(commBuy(d))],["Comm",fmtAED(commSec(d))],["AML Buyer",d.amlBuyer],["AML Seller",d.amlSeller],["KYC Sent",d.kycSent],["KYC Received",d.kycReceived],["Invoice No.",d.invoiceNo||"—"],["Status",d.status]])+`<div class="save-bar"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>`); };
 window.openSEForm=function(id){
   if(id===null && !canDo("canAdd")){ alert("You don't have permission to add records."); return; }
   if(id!==null && !canDo("canEdit")){ alert("You don't have permission to edit records."); return; }
@@ -1097,7 +1201,7 @@ window.openSEForm=function(id){
       <div class="field"><label>KYC Sent</label><select id="f-kycs"><option ${d?.kycSent==="Yes"?"selected":""}>Yes</option><option ${d?.kycSent==="No"?"selected":""}>No</option></select></div>
       <div class="field"><label>KYC Received</label><select id="f-kycr"><option ${d?.kycReceived==="Yes"?"selected":""}>Yes</option><option ${d?.kycReceived==="No"?"selected":""}>No</option></select></div>
     </div>
-    <div class="comm-box">Auto-calculated Total Commission: <span id="se-comm-preview">${fmtAED(d?commSec(d):0)}</span></div>
+    <div class="comm-box">Auto-calculated Commission: <span id="se-comm-preview">${fmtAED(d?commSec(d):0)}</span></div>
     <div class="save-bar">
       ${id && canDo('canDelete') ? `<button class="btn btn-delete" onclick="deleteRecord('secondary',${id},'secondary deal')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -1109,8 +1213,14 @@ window.saveSE=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
   try {
     const vals=[g("f-broker"),g("f-buyer"),g("f-seller"),1,g("f-status"),g("f-prop"),g("f-propno"),g("f-contract"),n(g("f-price")),n(g("f-sellpct")),n(g("f-buypct")),n(g("f-disc")),g("f-inv"),g("f-date"),g("f-amlb"),g("f-amls"),g("f-kycs"),g("f-kycr")];
-    if(id) await q("UPDATE secondary SET brokerId=?,buyerId=?,sellerId=?,developerId=?,status=?,property=?,propNo=?,contract=?,price=?,sellerPct=?,buyerPct=?,discount=?,invoiceNo=?,date=?,amlBuyer=?,amlSeller=?,kycSent=?,kycReceived=? WHERE id=?",[...vals,id]);
-    else   await q("INSERT INTO secondary (brokerId,buyerId,sellerId,developerId,status,property,propNo,contract,price,sellerPct,buyerPct,discount,invoiceNo,date,amlBuyer,amlSeller,kycSent,kycReceived) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",vals);
+    if(id) {
+      await q("UPDATE secondary SET brokerId=?,buyerId=?,sellerId=?,developerId=?,status=?,property=?,propNo=?,contract=?,price=?,sellerPct=?,buyerPct=?,discount=?,invoiceNo=?,date=?,amlBuyer=?,amlSeller=?,kycSent=?,kycReceived=? WHERE id=?",[...vals,id]);
+      await auditLog('UPDATE','secondary',id,`Updated secondary deal: ${vals[5]} ${vals[6]} (status: ${vals[4]})`);
+    } else {
+      await q("INSERT INTO secondary (brokerId,buyerId,sellerId,developerId,status,property,propNo,contract,price,sellerPct,buyerPct,discount,invoiceNo,date,amlBuyer,amlSeller,kycSent,kycReceived) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",vals);
+      const rows=await q("SELECT last_insert_rowid() as lid"); const newId=rows[0]?.lid||null;
+      await auditLog('CREATE','secondary',newId,`Created secondary deal: ${vals[5]} ${vals[6]} (AED ${n(vals[8]).toLocaleString()})`);
+    }
     await reload("secondary"); closeModal(); renderSecondary(document.getElementById("page-content"));
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
@@ -1119,17 +1229,21 @@ window.saveSE=async function(id){
 function renderRental(pc){
   const raw=(CU.brokerId)?DATA.rental.filter(d=>n(d.brokerId)===CU.brokerId):DATA.rental;
   pc.innerHTML=`
-    <div class="page-hdr"><div class="page-title">Rental Deals <small>(${raw.length})</small></div>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openREForm(null)">+ Add Deal</button>`:""}</div>
+    <div class="page-hdr"><div class="page-title">Rental Deals <small>(${raw.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('rental')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openREForm(null)">+ Add Deal</button>`:""}</div></div>
     <div class="card">
       <div class="search-row">
         <div class="search-wrap"><span class="icon">🔍</span><input id="q-re" placeholder="Search property…" oninput="filterRE()"/></div>
         <select id="sf-re" style="width:200px" onchange="filterRE()"><option>All</option><option>Ejari Signed</option><option>Commission Received</option><option>Renewed</option><option>Cancelled</option></select>
       </div>
-      <div class="overflow"><table><thead><tr><th>ID</th><th>Broker</th><th>Client</th><th>Property</th><th>Type</th><th>Rent</th><th>Comm%</th><th>Comm</th><th>VAT 5%</th><th>Total w/VAT</th><th>End Date</th><th>Renewal</th><th>Status</th><th>Actions</th></tr></thead>
+      <div class="overflow"><table><thead><tr><th>ID</th><th>Broker</th><th>Client</th><th>Property</th><th>Type</th><th>Rent</th><th>Comm%</th><th>Comm</th><th>VAT 5%</th><th>Total w/VAT</th><th>End Date</th><th>Renewal</th><th>Status</th><th>Comm Release</th><th>Actions</th></tr></thead>
       <tbody id="tbody-re">${reRows(raw)}</tbody></table></div>
     </div>`;
 }
-function reRows(rows){ return rows.map(d=>{ const days=daysUntil(d.endDate); return `<tr>
+function reRows(rows){ return rows.map(d=>{ const days=daysUntil(d.endDate);
+  const cr = getCRForDeal('rental', d.id);
+  const crBtn = canDo('canAdd') && !cr ? `<button class="btn" style="background:linear-gradient(135deg,#b8942e,var(--gold));color:#fff;border:none;font-size:.72rem;padding:4px 9px;white-space:nowrap" onclick="openCRForm(null,'rental',${d.id})">💰 Release</button>` :
+    cr ? `<button class="btn btn-ghost" style="font-size:.72rem;padding:4px 9px;white-space:nowrap" onclick="openCRForm(${cr.id})">💰 View CR</button>` : '';
+  return `<tr>
   <td class="mono">${id3("RE",d.id)}</td><td>${esc(bName(d.brokerId))}</td><td>${esc(cName(d.clientId))}</td>
   <td><b>${esc(d.property)}</b></td><td>${esc(d.contractType)}</td>
   <td style="font-weight:600">${fmt(d.rent)}</td><td>${d.commPct}%</td><td>${fmt(commR(d))}</td><td>${fmt(commVAT(d))}</td>
@@ -1137,8 +1251,9 @@ function reRows(rows){ return rows.map(d=>{ const days=daysUntil(d.endDate); ret
   <td>${esc(d.endDate)}</td>
   <td>${days<=90?`<span style="color:#d97706;font-weight:700;font-size:.78rem">⚠️ ${days}d</span>`:`<span style="font-size:.78rem;color:#64748b">${renewalDate(d)}</span>`}</td>
   <td>${badge(d.status)}</td>
-  <td style="white-space:nowrap"><button class="btn btn-ghost" onclick='viewRE(${d.id})' style="padding:5px 10px">👁</button> ${canDo('canEdit')?`<button class="btn btn-edit" onclick='openREForm(${d.id})'>✏️ Edit</button>`:''}</td>
-</tr>`; }).join("")||`<tr><td colspan="14" style="text-align:center;color:#94a3b8;padding:24px">No records</td></tr>`; }
+  <td>${crStatusBadge('rental',d.id)}</td>
+  <td style="white-space:nowrap;display:flex;gap:4px;align-items:center"><button class="btn btn-ghost" onclick='viewRE(${d.id})' style="padding:5px 10px">👁</button> ${canDo('canEdit')?`<button class="btn btn-edit" onclick='openREForm(${d.id})'>✏️ Edit</button>`:''} ${crBtn}</td>
+</tr>`; }).join("")||`<tr><td colspan="15" style="text-align:center;color:#94a3b8;padding:24px">No records</td></tr>`; }
 window.filterRE=function(){ const qv=(document.getElementById("q-re")?.value||"").toLowerCase(); const sf=document.getElementById("sf-re")?.value||"All"; const raw=(CU.brokerId)?DATA.rental.filter(d=>n(d.brokerId)===CU.brokerId):DATA.rental; document.getElementById("tbody-re").innerHTML=reRows(raw.filter(d=>(sf==="All"||d.status===sf)&&d.property?.toLowerCase().includes(qv))); };
 window.viewRE=function(id){ const d=DATA.rental.find(x=>n(x.id)===n(id)); if(!d)return; openModal(`Rental — ${d.property}`,viewGrid([["ID",id3("RE",d.id)],["Property",d.property],["Prop No.",d.propNo],["Contract Type",d.contractType],["Broker",bName(d.brokerId)],["Client",cName(d.clientId)],["Rent",fmtAED(d.rent)],["Comm %",d.commPct+"%"],["Commission",fmtAED(commR(d))],["VAT (5%)",fmtAED(commVAT(d))],["Total w/VAT",fmtAED(commRT(d))],["Date Rented",d.dateRented],["Start Date",d.startDate],["End Date",d.endDate],["Renewal Date",renewalDate(d)],["Invoice No.",d.invoiceNo||"—"],["PF Expert",d.pfExpert],["Status",d.status]])+`${d.notes?`<div class="note-box"><b>Notes:</b> ${esc(d.notes)}</div>`:""}<div class="save-bar"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>`); };
 window.openREForm=function(id){
@@ -1165,20 +1280,26 @@ window.openREForm=function(id){
       <div class="field"><label>PF Expert Transaction</label><select id="f-pf"><option ${d?.pfExpert==="Yes"?"selected":""}>Yes</option><option ${d?.pfExpert==="No"?"selected":""}>No</option></select></div>
     </div>
     <div style="margin-top:14px"><div class="field"><label>Notes</label><textarea id="f-notes" style="height:60px;resize:vertical">${esc(d?.notes||"")}</textarea></div></div>
-    <div class="comm-box">Auto-calculated Total (incl. VAT 5%): <span id="re-comm-preview">${fmtAED(d?commRT(d):0)}</span></div>
+    <div class="comm-box">Commission (excl. VAT): <span id="re-comm-preview">${fmtAED(d?commR(d):0)}</span> &nbsp;<span style="font-size:.75rem;color:#64748b">+ VAT 5%: <span id="re-vat-preview">${fmtAED(d?commVAT(d):0)}</span> = Total: <span id="re-total-preview">${fmtAED(d?commRT(d):0)}</span></span></div>
     <div class="save-bar">
       ${id && canDo('canDelete') ? `<button class="btn btn-delete" onclick="deleteRecord('rental',${id},'rental deal')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="save-btn" onclick="saveRE(${id||0})">💾 Save Changes</button>
     </div>`);
 };
-window.calcREComm=function(){ const r=n(gv("f-rent")); const c=n(gv("f-comm")); const el=document.getElementById("re-comm-preview"); if(el)el.textContent=fmtAED(r*c/100*1.05); };
+window.calcREComm=function(){ const r=n(gv("f-rent")); const c=n(gv("f-comm")); const comm=r*c/100; const vat=comm*0.05; const el=document.getElementById("re-comm-preview"); const ev=document.getElementById("re-vat-preview"); const et=document.getElementById("re-total-preview"); if(el)el.textContent=fmtAED(comm); if(ev)ev.textContent=fmtAED(vat); if(et)et.textContent=fmtAED(comm+vat); };
 window.saveRE=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
   try {
     const vals=[g("f-broker"),g("f-client"),g("f-status"),g("f-prop"),g("f-propno"),g("f-ctype"),n(g("f-rent")),n(g("f-comm")),g("f-inv"),g("f-dater"),g("f-start"),g("f-end"),g("f-pf"),g("f-notes")];
-    if(id) await q("UPDATE rental SET brokerId=?,clientId=?,status=?,property=?,propNo=?,contractType=?,rent=?,commPct=?,invoiceNo=?,dateRented=?,startDate=?,endDate=?,pfExpert=?,notes=? WHERE id=?",[...vals,id]);
-    else   await q("INSERT INTO rental (brokerId,clientId,status,property,propNo,contractType,rent,commPct,invoiceNo,dateRented,startDate,endDate,pfExpert,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",vals);
+    if(id) {
+      await q("UPDATE rental SET brokerId=?,clientId=?,status=?,property=?,propNo=?,contractType=?,rent=?,commPct=?,invoiceNo=?,dateRented=?,startDate=?,endDate=?,pfExpert=?,notes=? WHERE id=?",[...vals,id]);
+      await auditLog('UPDATE','rental',id,`Updated rental: ${vals[3]} ${vals[4]} (status: ${vals[2]})`);
+    } else {
+      await q("INSERT INTO rental (brokerId,clientId,status,property,propNo,contractType,rent,commPct,invoiceNo,dateRented,startDate,endDate,pfExpert,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",vals);
+      const rows=await q("SELECT last_insert_rowid() as lid"); const newId=rows[0]?.lid||null;
+      await auditLog('CREATE','rental',newId,`Created rental: ${vals[3]} ${vals[4]} (AED ${n(vals[6]).toLocaleString()} ${vals[5]})`);
+    }
     await reload("rental"); closeModal(); renderRental(document.getElementById("page-content"));
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
@@ -1195,7 +1316,7 @@ function renderReports(pc){
 
   const grandOpC  = active.reduce((s,b)=>s+DATA.offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commOP(d),0),0);
   const grandSeC  = active.reduce((s,b)=>s+DATA.secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commSec(d),0),0);
-  const grandReC  = active.reduce((s,b)=>s+DATA.rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commRT(d),0),0);
+  const grandReC  = active.reduce((s,b)=>s+DATA.rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commR(d),0),0);
   const grandOpAmt= active.reduce((s,b)=>s+DATA.offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.price),0),0);
   const grandSeAmt= active.reduce((s,b)=>s+DATA.secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.price),0),0);
   const grandReAmt= active.reduce((s,b)=>s+DATA.rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.rent),0),0);
@@ -1223,7 +1344,7 @@ function renderReports(pc){
     const reD = DATA.rental.filter(d=>n(d.brokerId)===n(b.id));
     const opC = opD.reduce((s,d)=>s+commOP(d),0);
     const seC = seD.reduce((s,d)=>s+commSec(d),0);
-    const reC = reD.reduce((s,d)=>s+commRT(d),0);
+    const reC = reD.reduce((s,d)=>s+commR(d),0); // excl. VAT
     const opAmt = opD.reduce((s,d)=>s+n(d.price),0);
     const seAmt = seD.reduce((s,d)=>s+n(d.price),0);
     const reAmt = reD.reduce((s,d)=>s+n(d.rent),0);
@@ -1253,7 +1374,7 @@ function renderReports(pc){
       <td>${esc(d.contractType)}</td><td>${esc(cName(d.clientId))}</td><td>${badge(d.status)}</td>
       <td style="text-align:right;font-weight:600">${fmt(d.rent)}</td>
       <td style="text-align:right">${d.commPct}%</td>
-      <td style="text-align:right;color:var(--gold);font-weight:700">${fmt(commRT(d))}</td>
+      <td style="text-align:right;color:var(--gold);font-weight:700">${fmt(commR(d))}</td>
     </tr>`).join("");
 
     return `<div class="card" style="margin-bottom:20px">
@@ -1319,20 +1440,54 @@ function renderCommissionRelease(pc){
     ...DATA.rental.map(d=>({ table:'rental', id:d.id, label:`[RE] ${d.property} ${d.propNo} (${bName(d.brokerId)})`, brokerId:d.brokerId, project:`${d.property} ${d.propNo}`, comm:commR(d) })),
   ];
 
-  const totalComm   = rows.reduce((s,r)=>s+n(r.totalCommission),0);
-  const totalRec    = rows.reduce((s,r)=>s+n(r.amountReceived),0);
-  const totalPend   = rows.filter(r=>r.status==='Pending').reduce((s,r)=>s+n(r.totalCommission)-n(r.amountReceived),0);
+  // Always derive commission live from source deal; fall back to stored value if deal is orphaned
+  function crLiveComm(r) {
+    const src = r.dealTable==='offplan'?DATA.offplan:r.dealTable==='secondary'?DATA.secondary:DATA.rental;
+    const d = src?.find(x=>n(x.id)===n(r.dealId));
+    if (!d) return n(r.totalCommission);
+    return r.dealTable==='offplan' ? commOP(d) : r.dealTable==='secondary' ? commSec(d) : commR(d);
+  }
+  const totalComm      = rows.reduce((s,r)=>s+crLiveComm(r),0);
+  const totalVAT       = totalComm * 0.05;
+  const totalBShare    = rows.reduce((s,r)=>s+(crLiveComm(r)*n(r.brokerPct||50)/100),0);
+  const totalCShare    = rows.reduce((s,r)=>s+(crLiveComm(r)*n(r.companyPct||50)/100),0);
+  const totalRec       = rows.reduce((s,r)=>s+n(r.amountReceived),0);
+  const paidRows       = rows.filter(r=>r.status==='Paid');
+  const pendRows       = rows.filter(r=>r.status==='Pending');
+  const bShareRec      = paidRows.reduce((s,r)=>s+(crLiveComm(r)*n(r.brokerPct||50)/100),0);
+  const bSharePend     = pendRows.reduce((s,r)=>s+(crLiveComm(r)*n(r.brokerPct||50)/100),0);
+  const cShareRec      = paidRows.reduce((s,r)=>s+(crLiveComm(r)*n(r.companyPct||50)/100),0);
+  const cSharePend     = pendRows.reduce((s,r)=>s+(crLiveComm(r)*n(r.companyPct||50)/100),0);
+  const totalPend      = pendRows.reduce((s,r)=>s+crLiveComm(r)-n(r.amountReceived),0);
 
   pc.innerHTML = `
     <div class="page-hdr">
       <div class="page-title">Commission Release <small>(${rows.length})</small></div>
-      <button class="btn btn-primary" onclick="openCRForm(null)">+ Add Release</button>
+      <div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('commission_release')">⬇ Export CSV</button><button class="btn btn-primary" onclick="openCRForm(null)">+ Add Release</button></div>
     </div>
-    <div class="stat-grid" style="margin-bottom:18px">
+    <div class="stat-grid" style="margin-bottom:10px">
       <div class="stat-card gold"><div class="stat-val">${fmtAED(totalComm)}</div><div class="stat-lbl">Total Commission</div></div>
-      <div class="stat-card gold"><div class="stat-val">${fmtAED(totalRec)}</div><div class="stat-lbl">Total Received</div></div>
+      <div class="stat-card gold"><div class="stat-val">${fmtAED(totalVAT)}</div><div class="stat-lbl">Est. VAT (5%)</div></div>
+      <div class="stat-card dark"><div class="stat-val">${fmtAED(totalRec)}</div><div class="stat-lbl">Total Received</div></div>
       <div class="stat-card dark"><div class="stat-val">${fmtAED(totalPend)}</div><div class="stat-lbl">Pending Balance</div></div>
-      <div class="stat-card dark"><div class="stat-val">${rows.filter(r=>r.status==='Paid').length} / ${rows.length}</div><div class="stat-lbl">Paid / Total</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px">
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:14px 18px">
+        <div style="font-size:.72rem;font-weight:800;color:#1d4ed8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;border-bottom:1px solid #bfdbfe;padding-bottom:6px">👤 Broker Share</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div><div class="audit-lbl">Total</div><div style="font-weight:800;color:#1d4ed8;font-size:.9rem">${fmtAED(totalBShare)}</div></div>
+          <div><div class="audit-lbl">Received (Paid)</div><div style="font-weight:800;color:#16a34a;font-size:.9rem">${fmtAED(bShareRec)}</div></div>
+          <div><div class="audit-lbl">Pending</div><div style="font-weight:800;color:#dc2626;font-size:.9rem">${fmtAED(bSharePend)}</div></div>
+        </div>
+      </div>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:14px 18px">
+        <div style="font-size:.72rem;font-weight:800;color:#15803d;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;border-bottom:1px solid #bbf7d0;padding-bottom:6px">🏢 Company Share</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div><div class="audit-lbl">Total</div><div style="font-weight:800;color:#15803d;font-size:.9rem">${fmtAED(totalCShare)}</div></div>
+          <div><div class="audit-lbl">Received (Paid)</div><div style="font-weight:800;color:#16a34a;font-size:.9rem">${fmtAED(cShareRec)}</div></div>
+          <div><div class="audit-lbl">Pending</div><div style="font-weight:800;color:#dc2626;font-size:.9rem">${fmtAED(cSharePend)}</div></div>
+        </div>
+      </div>
     </div>
     <div class="card">
       <div class="search-row">
@@ -1343,6 +1498,7 @@ function renderCommissionRelease(pc){
         <thead><tr>
           <th>ID</th><th>Broker</th><th>Project / Deal</th><th>Type</th>
           <th style="text-align:right">Total Commission</th>
+          <th style="text-align:right">Est. VAT (5%)</th>
           <th style="text-align:right">Broker Share</th>
           <th style="text-align:right">Company Share</th>
           <th style="text-align:right">Amount Received</th>
@@ -1353,23 +1509,40 @@ function renderCommissionRelease(pc){
       </table></div>
     </div>`;
 
-  // store allDeals on window for form use
+  // keep live reference for receipt lookups
   window._crDeals = allDeals;
 }
 
 function crRows(rows){
-  return rows.map(r=>{
-    const balance = n(r.totalCommission) - n(r.amountReceived);
-    const bPct = n(r.brokerPct||50);
-    const cPct = n(r.companyPct||50);
-    const bShare = n(r.totalCommission) * bPct / 100;
-    const cShare = n(r.totalCommission) * cPct / 100;
+  if (!rows.length) return `<tr><td colspan="14" style="text-align:center;color:#94a3b8;padding:24px">No records</td></tr>`;
+
+  let ftComm=0, ftVAT=0, ftBShare=0, ftCShare=0, ftRec=0, ftBal=0;
+
+  const rowHtml = rows.map(r=>{
+    const src = r.dealTable==='offplan'?DATA.offplan:r.dealTable==='secondary'?DATA.secondary:DATA.rental;
+    const liveDeal = src?.find(x=>n(x.id)===n(r.dealId)) || null;
+    const comm = liveDeal
+      ? (r.dealTable==='offplan' ? commOP(liveDeal) : r.dealTable==='secondary' ? commSec(liveDeal) : commR(liveDeal))
+      : n(r.totalCommission);
+    const vat    = comm * 0.05;
+    const bPct   = n(r.brokerPct||50);
+    const cPct   = n(r.companyPct||50);
+    const bShare = comm * bPct / 100;
+    const cShare = comm * cPct / 100;
+    const balance = comm - n(r.amountReceived);
+    ftComm+=comm; ftVAT+=vat; ftBShare+=bShare; ftCShare+=cShare; ftRec+=n(r.amountReceived); ftBal+=balance;
+    const linkBadge = liveDeal
+      ? `<span style="font-size:.68rem;background:#dcfce7;color:#16a34a;border:1px solid #86efac;padding:2px 7px;border-radius:20px;font-weight:700" title="Linked to ${r.dealTable} #${r.dealId}">✓ Linked</span>`
+      : `<span style="font-size:.68rem;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;padding:2px 7px;border-radius:20px;font-weight:700" title="Source deal not found">⚠ Orphan</span>`;
+    const typeLabel = r.dealTable==='offplan'?'Off Plan':r.dealTable==='secondary'?'Secondary':'Rental';
+    const viewDealBtn = liveDeal ? `<button class="btn btn-ghost" style="font-size:.72rem;padding:3px 8px" onclick="${r.dealTable==='offplan'?`viewOP(${r.dealId})`:r.dealTable==='secondary'?`viewSE(${r.dealId})`:`viewRE(${r.dealId})`}" title="View source deal">🔗</button>` : '';
     return `<tr>
       <td class="mono">${id3('CR',r.id)}</td>
       <td><b>${esc(bName(r.brokerId))}</b></td>
       <td>${esc(r.projectName)}</td>
-      <td><span class="badge b-blue">${esc(r.dealTable==='offplan'?'Off Plan':r.dealTable==='secondary'?'Secondary':'Rental')}</span></td>
-      <td style="text-align:right;font-weight:600">${fmtAED(r.totalCommission)}</td>
+      <td><span class="badge b-blue">${typeLabel}</span><br>${linkBadge}</td>
+      <td style="text-align:right;font-weight:600">${fmtAED(comm)}</td>
+      <td style="text-align:right;color:#b45309;font-size:.82rem">${fmtAED(vat)}</td>
       <td style="text-align:right;color:#1d4ed8;font-weight:700">${fmtAED(bShare)} <span style="font-size:.7rem;opacity:.7">(${bPct}%)</span></td>
       <td style="text-align:right;color:#15803d;font-weight:700">${fmtAED(cShare)} <span style="font-size:.7rem;opacity:.7">(${cPct}%)</span></td>
       <td style="text-align:right;color:#16a34a;font-weight:700">${fmtAED(r.amountReceived)}</td>
@@ -1377,13 +1550,27 @@ function crRows(rows){
       <td>${esc(r.releaseDate)}</td>
       <td>${badge(r.status)}</td>
       <td style="font-size:.78rem;color:#64748b;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.notes||'')}</td>
-      <td style="white-space:nowrap">
+      <td style="white-space:nowrap;display:flex;gap:5px;align-items:center">
+        ${viewDealBtn}
         <button class="btn btn-edit" onclick="openCRForm(${r.id})">✏️ Edit</button>
+        <button class="btn" style="background:linear-gradient(135deg,#b8942e,var(--gold));color:#fff;border:none;font-size:.78rem;padding:5px 10px" onclick="issueReceipt(${r.id})">🧾 Receipt</button>
       </td>
     </tr>`;
-  }).join('') || `<tr><td colspan="13" style="text-align:center;color:#94a3b8;padding:24px">No records</td></tr>`;
-}
+  }).join('');
 
+  const footer = `<tr style="background:#fef9c3;font-weight:800;border-top:2px solid #c9a84c">
+    <td colspan="4" style="padding:8px 10px;font-size:.82rem;color:#334155">Totals (${rows.length} records)</td>
+    <td style="text-align:right;color:#334155">${fmtAED(ftComm)}</td>
+    <td style="text-align:right;color:#b45309">${fmtAED(ftVAT)}</td>
+    <td style="text-align:right;color:#1d4ed8">${fmtAED(ftBShare)}</td>
+    <td style="text-align:right;color:#15803d">${fmtAED(ftCShare)}</td>
+    <td style="text-align:right;color:#16a34a">${fmtAED(ftRec)}</td>
+    <td style="text-align:right;color:${ftBal>0?'#dc2626':'#16a34a'}">${fmtAED(ftBal)}</td>
+    <td colspan="4"></td>
+  </tr>`;
+
+  return rowHtml + footer;
+}
 window.filterCR = function(){
   const qv = (document.getElementById('q-cr')?.value||'').toLowerCase();
   const sf  = document.getElementById('sf-cr')?.value||'All';
@@ -1395,27 +1582,115 @@ window.filterCR = function(){
   );
 };
 
-window.openCRForm = function(id){
+// Helper: build a rich deal preview card from a deal object
+function buildDealPreviewCard(dealTable, deal) {
+  if (!deal) return '';
+  let rows = '';
+  if (dealTable === 'offplan') {
+    const comm = commOP(deal);
+    rows = `
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div><div class="audit-lbl">Project</div><div class="audit-val"><b>${esc(deal.project)}</b></div></div>
+        <div><div class="audit-lbl">Unit</div><div class="audit-val">${esc(deal.unit)}</div></div>
+        <div><div class="audit-lbl">Developer</div><div class="audit-val">${esc(dName(deal.developerId))}</div></div>
+        <div><div class="audit-lbl">Client</div><div class="audit-val">${esc(cName(deal.clientId))}</div></div>
+        <div><div class="audit-lbl">Price (AED)</div><div class="audit-val">${fmtAED(deal.price)}</div></div>
+        <div><div class="audit-lbl">Commission (${deal.commPct}%)</div><div class="audit-val" style="color:var(--gold);font-weight:800">${fmtAED(comm)}</div></div>
+        <div><div class="audit-lbl">Date</div><div class="audit-val">${esc(deal.date||'—')}</div></div>
+        <div><div class="audit-lbl">Invoice</div><div class="audit-val">${esc(deal.invoiceNo||'—')}</div></div>
+        <div><div class="audit-lbl">Status</div><div class="audit-val">${badge(deal.status)}</div></div>
+      </div>`;
+  } else if (dealTable === 'secondary') {
+    const comm = commSec(deal);
+    rows = `
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div><div class="audit-lbl">Property</div><div class="audit-val"><b>${esc(deal.property)}</b></div></div>
+        <div><div class="audit-lbl">Unit No.</div><div class="audit-val">${esc(deal.propNo)}</div></div>
+        <div><div class="audit-lbl">Contract</div><div class="audit-val">${esc(deal.contract||'—')}</div></div>
+        <div><div class="audit-lbl">Buyer</div><div class="audit-val">${esc(cName(deal.buyerId))}</div></div>
+        <div><div class="audit-lbl">Seller</div><div class="audit-val">${esc(cName(deal.sellerId))}</div></div>
+        <div><div class="audit-lbl">Price (AED)</div><div class="audit-val">${fmtAED(deal.price)}</div></div>
+        <div><div class="audit-lbl">Seller Comm (${deal.sellerPct}%)</div><div class="audit-val">${fmtAED(commSel(deal))}</div></div>
+        <div><div class="audit-lbl">Buyer Comm (${deal.buyerPct}%)</div><div class="audit-val">${fmtAED(commBuy(deal))}</div></div>
+        <div><div class="audit-lbl">Total Commission</div><div class="audit-val" style="color:var(--gold);font-weight:800">${fmtAED(comm)}</div></div>
+        <div><div class="audit-lbl">Date</div><div class="audit-val">${esc(deal.date||'—')}</div></div>
+        <div><div class="audit-lbl">Invoice</div><div class="audit-val">${esc(deal.invoiceNo||'—')}</div></div>
+        <div><div class="audit-lbl">Status</div><div class="audit-val">${badge(deal.status)}</div></div>
+      </div>`;
+  } else if (dealTable === 'rental') {
+    const comm = commR(deal);
+    rows = `
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div><div class="audit-lbl">Property</div><div class="audit-val"><b>${esc(deal.property)}</b></div></div>
+        <div><div class="audit-lbl">Unit No.</div><div class="audit-val">${esc(deal.propNo)}</div></div>
+        <div><div class="audit-lbl">Contract Type</div><div class="audit-val">${esc(deal.contractType)}</div></div>
+        <div><div class="audit-lbl">Client</div><div class="audit-val">${esc(cName(deal.clientId))}</div></div>
+        <div><div class="audit-lbl">Annual Rent (AED)</div><div class="audit-val">${fmtAED(deal.rent)}</div></div>
+        <div><div class="audit-lbl">Commission (${deal.commPct}%)</div><div class="audit-val" style="color:var(--gold);font-weight:800">${fmtAED(comm)}</div></div>
+        <div><div class="audit-lbl">Date Rented</div><div class="audit-val">${esc(deal.dateRented||'—')}</div></div>
+        <div><div class="audit-lbl">Invoice</div><div class="audit-val">${esc(deal.invoiceNo||'—')}</div></div>
+        <div><div class="audit-lbl">Status</div><div class="audit-val">${badge(deal.status)}</div></div>
+      </div>`;
+  }
+  const typeLabel = dealTable==='offplan'?'🏗 Off Plan':dealTable==='secondary'?'🔄 Secondary':'🏠 Rental';
+  return `
+    <div style="background:#f8fafc;border:1px solid #c9a84c44;border-left:4px solid var(--gold);border-radius:10px;padding:14px 16px;margin-bottom:4px">
+      <div style="font-size:.72rem;font-weight:800;color:var(--gold);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px">${typeLabel} · ${esc(bName(deal.brokerId))}</div>
+      ${rows}
+    </div>`;
+}
+
+window.openCRForm = function(id, preFillTable, preFillDealId){
   if(id===null && !canDo("canAdd")){ alert("You don't have permission to add records."); return; }
   if(id!==null && !canDo("canEdit")){ alert("You don't have permission to edit records."); return; }
 
   const r = id ? DATA.commission_release.find(x=>n(x.id)===n(id)) : null;
-  const deals = window._crDeals || [];
 
-  // Build deal selector grouped by broker
-  const dealOpts = deals.map(d=>`<option value="${d.table}|${d.id}|${d.brokerId}|${d.comm.toFixed(2)}" ${r && r.dealTable===d.table && n(r.dealId)===n(d.id)?'selected':''}>${esc(d.label)} — ${fmtAED(d.comm)}</option>`).join('');
+  // Determine which deal is currently selected
+  const selTable  = r ? r.dealTable  : (preFillTable  || null);
+  const selDealId = r ? n(r.dealId)  : (preFillDealId ? n(preFillDealId) : null);
+
+  // Build grouped deal options: unreleased first, already-linked last (disabled)
+  const allDeals = [
+    ...DATA.offplan.map(d  => ({ table:'offplan',   id:d.id, label:`[OP] ${d.project} – ${d.unit}`, broker:bName(d.brokerId), brokerId:d.brokerId, comm:commOP(d) })),
+    ...DATA.secondary.map(d=> ({ table:'secondary', id:d.id, label:`[SE] ${d.property} ${d.propNo}`, broker:bName(d.brokerId), brokerId:d.brokerId, comm:commSec(d) })),
+    ...DATA.rental.map(d   => ({ table:'rental',    id:d.id, label:`[RE] ${d.property} ${d.propNo}`, broker:bName(d.brokerId), brokerId:d.brokerId, comm:commR(d)   })),
+  ];
+
+  const free   = allDeals.filter(d => !getCRForDeal(d.table, d.id) || (d.table===selTable && n(d.id)===selDealId));
+  const linked = allDeals.filter(d =>  getCRForDeal(d.table, d.id) && !(d.table===selTable && n(d.id)===selDealId));
+
+  function dealOpt(d) {
+    const isSel = d.table===selTable && n(d.id)===selDealId;
+    return `<option value="${d.table}|${d.id}|${d.brokerId}|${d.comm.toFixed(2)}" ${isSel?'selected':''}>${esc(d.label)} · ${esc(d.broker)} — ${fmtAED(d.comm)}</option>`;
+  }
+
+  const dealOpts =
+    `<optgroup label="— Available Deals —">${free.map(dealOpt).join('')}</optgroup>` +
+    (linked.length ? `<optgroup label="— Already Linked —">${linked.map(d=>`<option value="${d.table}|${d.id}|${d.brokerId}|${d.comm.toFixed(2)}" disabled>${esc(d.label)} · ${esc(d.broker)} ✓ CR exists</option>`).join('')}</optgroup>` : '');
 
   const brokerPct  = r ? n(r.brokerPct||50)  : 50;
   const companyPct = r ? n(r.companyPct||50) : 50;
 
-  openModal(r ? 'Edit Commission Release' : 'Add Commission Release', `
+  // Pre-compute initial deal for preview
+  let initDeal = null;
+  if (selTable && selDealId) {
+    const src = selTable==='offplan'?DATA.offplan:selTable==='secondary'?DATA.secondary:DATA.rental;
+    initDeal = src.find(x=>n(x.id)===selDealId) || null;
+  }
+  const initComm = initDeal ? (selTable==='offplan'?commOP(initDeal):selTable==='secondary'?commSec(initDeal):commR(initDeal)) : 0;
+
+  openModal(r ? 'Edit Commission Release' : 'New Commission Release', `
+    <div class="field" style="margin-bottom:12px">
+      <label>Select Deal <span style="font-size:.75rem;color:#64748b;font-weight:400">(commission auto-calculated from source deal)</span></label>
+      <select id="f-deal" onchange="onCRDealChange()" style="font-size:.84rem">${dealOpts}</select>
+    </div>
+
+    <div id="cr-deal-preview" style="margin-bottom:14px">${initDeal ? buildDealPreviewCard(selTable, initDeal) : ''}</div>
+
     <div class="g2">
-      <div class="field" style="grid-column:1/-1">
-        <label>Select Deal</label>
-        <select id="f-deal" onchange="onCRDealChange()" style="font-size:.84rem">${dealOpts}</select>
-      </div>
-      <div class="field"><label>Broker</label><input id="f-crbroker" readonly style="background:#f1f5f9" value="${esc(r?bName(r.brokerId):'')}" /></div>
-      <div class="field"><label>Total Commission excl. VAT (AED)</label><input id="f-totcomm" type="number" readonly style="background:#f1f5f9" value="${r?n(r.totalCommission).toFixed(2):''}"/></div>
+      <div class="field"><label>Broker</label><input id="f-crbroker" readonly style="background:#f1f5f9;font-weight:700" value="${esc(initDeal?bName(initDeal.brokerId):r?bName(r.brokerId):'')}" /></div>
+      <div class="field"><label>Commission (AED) <span style="font-size:.72rem;color:#16a34a">auto-calculated</span></label><input id="f-totcomm" type="number" readonly style="background:#f1f5f9;color:var(--gold);font-weight:800" value="${initComm.toFixed(2)}"/></div>
       <div class="field"><label>Amount Received (AED)</label><input id="f-amtrec" type="number" step="0.01" value="${r?n(r.amountReceived).toFixed(2):'0'}"/></div>
       <div class="field"><label>Release Date</label><input type="date" id="f-reldate" value="${esc(r?.releaseDate||'')}"/></div>
       <div class="field"><label>Status</label>
@@ -1424,10 +1699,10 @@ window.openCRForm = function(id){
           <option ${r?.status==='Paid'?'selected':''}>Paid</option>
         </select>
       </div>
-      <div class="field" style="grid-column:1/-1"><label>Notes</label><textarea id="f-crnotes" style="height:60px;resize:vertical">${esc(r?.notes||'')}</textarea></div>
+      <div class="field" style="grid-column:1/-1"><label>Notes</label><textarea id="f-crnotes" style="height:54px;resize:vertical">${esc(r?.notes||'')}</textarea></div>
     </div>
 
-    <div style="margin:16px 0 6px;font-weight:700;font-size:.85rem;color:var(--navy);border-bottom:2px solid var(--navy);padding-bottom:6px">💰 Commission Split (excl. VAT)</div>
+    <div style="margin:14px 0 6px;font-weight:700;font-size:.85rem;color:var(--navy);border-bottom:2px solid var(--navy);padding-bottom:6px">💰 Commission Split</div>
     <div class="g2" style="margin-bottom:4px">
       <div class="field">
         <label>Broker % <span style="font-weight:400;color:#64748b">(default 50%)</span></label>
@@ -1450,30 +1725,33 @@ window.openCRForm = function(id){
     </div>
     <div id="cr-split-warning" style="display:none;background:#fee2e2;color:#dc2626;border-radius:7px;padding:7px 12px;font-size:.8rem;margin-bottom:6px">⚠️ Broker % + Company % must equal 100%</div>
 
-    <div class="comm-box" style="margin-top:10px">Balance Remaining: <span id="cr-balance-preview">${fmtAED(r?n(r.totalCommission)-n(r.amountReceived):0)}</span> &nbsp;<span style="font-size:.75rem;color:#64748b;font-weight:400">(excl. 5% VAT — VAT is collected by company separately)</span></div>
+    <div class="comm-box" style="margin-top:10px">Balance Remaining: <span id="cr-balance-preview">${fmtAED(initComm-n(r?.amountReceived||0))}</span></div>
     <div class="save-bar">
       ${id && canDo('canDelete') ? `<button class="btn btn-delete" onclick="deleteRecord('commission_release',${id},'commission release')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="save-btn" onclick="saveCR(${id||0})">💾 Save</button>
     </div>`);
 
-  // populate on load if editing
   if(r) updateCRBalance();
   else onCRDealChange();
-
   document.getElementById('f-amtrec').addEventListener('input', updateCRBalance);
-  // init split preview
   updateSplitPreview();
 };
-
 window.onCRDealChange = function(){
   const sel = document.getElementById('f-deal')?.value;
   if(!sel) return;
   const [table, dealId, brokerId, comm] = sel.split('|');
-  const brokerEl = document.getElementById('f-crbroker');
-  const commEl   = document.getElementById('f-totcomm');
+  const brokerEl   = document.getElementById('f-crbroker');
+  const commEl     = document.getElementById('f-totcomm');
+  const previewEl  = document.getElementById('cr-deal-preview');
   if(brokerEl) brokerEl.value = bName(brokerId);
   if(commEl)   commEl.value  = parseFloat(comm).toFixed(2);
+  // Update deal preview card
+  if(previewEl) {
+    const src = table==='offplan'?DATA.offplan:table==='secondary'?DATA.secondary:DATA.rental;
+    const deal = src.find(x=>n(x.id)===n(dealId)) || null;
+    previewEl.innerHTML = deal ? buildDealPreviewCard(table, deal) : '';
+  }
   updateCRBalance();
   updateSplitPreview();
 };
@@ -1493,9 +1771,11 @@ window.onSplitChange = function(changed){
   // Auto-fill the other field to keep total = 100
   if(changed==='broker'){
     const bv = Math.min(100, Math.max(0, n(bEl.value)));
+    bEl.value = bv;
     cEl.value = (100 - bv).toFixed(1);
   } else {
     const cv = Math.min(100, Math.max(0, n(cEl.value)));
+    cEl.value = cv;
     bEl.value = (100 - cv).toFixed(1);
   }
   updateSplitPreview();
@@ -1508,10 +1788,19 @@ function updateSplitPreview(){
   const bShare = document.getElementById('cr-broker-share');
   const cShare = document.getElementById('cr-company-share');
   const warn   = document.getElementById('cr-split-warning');
+  const bEl    = document.getElementById('f-brokerpct');
+  const cEl    = document.getElementById('f-companypct');
+  const saveBtn= document.getElementById('save-btn');
   if(bShare) bShare.textContent = fmtAED(comm * brokerPct / 100);
   if(cShare) cShare.textContent = fmtAED(comm * companyPct / 100);
   const total = brokerPct + companyPct;
-  if(warn) warn.style.display = Math.abs(total - 100) > 0.01 ? 'block' : 'none';
+  const invalid = Math.abs(total - 100) > 0.01;
+  if(warn) warn.style.display = invalid ? 'block' : 'none';
+  const errStyle = 'border:2px solid #ef4444;background:#fff5f5';
+  const okStyle  = '';
+  if(bEl) bEl.style.cssText = invalid ? errStyle : okStyle;
+  if(cEl) cEl.style.cssText = invalid ? errStyle : okStyle;
+  if(saveBtn) saveBtn.disabled = invalid;
 }
 
 window.saveCR = async function(id){
@@ -1526,8 +1815,14 @@ window.saveCR = async function(id){
     const relDate     = g('f-reldate');
     const status      = g('f-crstatus');
     const notes       = g('f-crnotes');
-    const brokerPct   = n(g('f-brokerpct')) || 50;
-    const companyPct  = n(g('f-companypct')) || 50;
+    const brokerPct   = n(g('f-brokerpct'));
+    const companyPct  = n(g('f-companypct'));
+    if (Math.abs(brokerPct + companyPct - 100) > 0.01) {
+      const warn = document.getElementById('cr-split-warning');
+      if (warn) { warn.style.display='block'; warn.scrollIntoView({behavior:'smooth',block:'nearest'}); }
+      btn.disabled=false; btn.textContent='💾 Save';
+      return;
+    }
 
     // Get project name from deal
     let projectName = g('f-crbroker'); // fallback
@@ -1545,9 +1840,12 @@ window.saveCR = async function(id){
     if(id){
       await q('UPDATE commission_release SET brokerId=?,dealTable=?,dealId=?,projectName=?,totalCommission=?,amountReceived=?,releaseDate=?,status=?,notes=?,brokerPct=?,companyPct=? WHERE id=?',
         [brokerIdNum, dealTable, dealIdNum, projectName, totalComm, amtRec, relDate, status, notes, brokerPct, companyPct, id]);
+      await auditLog('UPDATE','commission_release',id,`Updated commission release: ${projectName} – AED ${totalComm.toLocaleString()} (${status})`);
     } else {
       await q('INSERT INTO commission_release (brokerId,dealTable,dealId,projectName,totalCommission,amountReceived,releaseDate,status,notes,brokerPct,companyPct) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
         [brokerIdNum, dealTable, dealIdNum, projectName, totalComm, amtRec, relDate, status, notes, brokerPct, companyPct]);
+      const rows=await q("SELECT last_insert_rowid() as lid"); const newId=rows[0]?.lid||null;
+      await auditLog('CREATE','commission_release',newId,`Created commission release: ${projectName} – AED ${totalComm.toLocaleString()}`);
     }
     await reload('commission_release');
     closeModal();
@@ -1558,7 +1856,7 @@ window.saveCR = async function(id){
 
 function renderSettings(pc){
   const isAdmin = CU.role==="Admin";
-  const TABLE_LABELS = {dashboard:"Dashboard",brokers:"Brokers",developers:"Developers",clients:"Clients",offplan:"Off Plan",secondary:"Secondary",rental:"Rental",reports:"Reports",commission_release:"Commission Release"};
+  const TABLE_LABELS = {dashboard:"Dashboard",brokers:"Brokers",developers:"Developers",clients:"Clients",offplan:"Off Plan",secondary:"Secondary",rental:"Rental",reports:"Reports",commission_release:"Commission Release",audit_log:"Audit Log"};
 
   function userCard(usr, idx){
     if(usr.role==="Admin") return `
@@ -1576,7 +1874,12 @@ function renderSettings(pc){
             <div style="width:38px;height:38px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:1rem">${usr.name[0]}</div>
             <div><div style="font-weight:700">${esc(usr.name)}</div><div style="font-size:.75rem;color:#64748b">@${esc(usr.username)} · ${usr.role}</div></div>
           </div>
-          ${isAdmin?`<button class="btn" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;font-size:.78rem" onclick="resetPwPrompt(${idx})">🔑 Reset Password</button>`:''}
+          ${isAdmin?`
+            <div style="display:flex;gap:6px">
+              <button class="btn" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;font-size:.78rem" onclick="resetPwPrompt(${idx})">🔑 Reset Password</button>
+              <button class="btn" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;font-size:.78rem" onclick="deleteUserPrompt(${idx})">🗑️ Delete</button>
+            </div>
+          `:''}
         </div>
 
         <div style="margin-bottom:12px">
@@ -1632,7 +1935,10 @@ function renderSettings(pc){
 
     <!-- User Access Management -->
     <div style="max-width:760px">
-      <div style="font-weight:700;font-size:1rem;margin-bottom:4px;color:var(--fg)">👥 User Access Management</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+        <div style="font-weight:700;font-size:1rem;color:var(--fg)">👥 User Access Management</div>
+        <button class="btn btn-primary" style="font-size:.8rem;padding:7px 14px" onclick="openAddUserModal()">+ Add User</button>
+      </div>
       <div style="font-size:.8rem;color:#64748b;margin-bottom:16px">Configure table access and action permissions for each user.</div>
       <div id="user-cards-container">
         ${USERS.map((u,i)=>userCard(u,i)).join('')}
@@ -1640,18 +1946,23 @@ function renderSettings(pc){
     </div>` : ''}`;
 }
 
-// Permission toggle (admin only)
-window.togglePerm = function(idx, type, key, val) {
+// Permission toggle (admin only) — persists to DB
+window.togglePerm = async function(idx, type, key, val) {
   if(CU.role!=="Admin") return;
   const usr = USERS[idx];
   if(type==='tables') usr.perms.tables[key]=val;
   else usr.perms[key]=val;
+  // Persist to DB
+  try {
+    await q('UPDATE users SET perms=? WHERE id=?', [JSON.stringify(usr.perms), usr.id]);
+    await auditLog('UPDATE','users',usr.id,`Updated permissions for user: ${usr.name} (@${usr.username})`);
+  } catch(e) { console.error('Failed to save perms:', e); }
   // Rebuild nav if editing current user
   if(usr.username===CU.username) buildApp();
   // Re-render the user cards only
   const container = document.getElementById('user-cards-container');
   if(container) {
-    const TABLE_LABELS = {dashboard:"Dashboard",brokers:"Brokers",developers:"Developers",clients:"Clients",offplan:"Off Plan",secondary:"Secondary",rental:"Rental",reports:"Reports",commission_release:"Commission Release"};
+    const TABLE_LABELS = {dashboard:"Dashboard",brokers:"Brokers",developers:"Developers",clients:"Clients",offplan:"Off Plan",secondary:"Secondary",rental:"Rental",reports:"Reports",commission_release:"Commission Release",audit_log:"Audit Log"};
     container.innerHTML = USERS.map((u,i)=>{
       if(u.role==="Admin") return `
         <div class="card" style="margin-bottom:16px;border-left:4px solid var(--gold)">
@@ -1668,7 +1979,10 @@ window.togglePerm = function(idx, type, key, val) {
               <div style="width:38px;height:38px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:1rem">${u.name[0]}</div>
               <div><div style="font-weight:700">${esc(u.name)}</div><div style="font-size:.75rem;color:#64748b">@${esc(u.username)} · ${u.role}</div></div>
             </div>
-            <button class="btn" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;font-size:.78rem" onclick="resetPwPrompt(${i})">🔑 Reset Password</button>
+            <div style="display:flex;gap:6px">
+              <button class="btn" style="background:#fef3c7;color:#92400e;border:1px solid #fde68a;font-size:.78rem" onclick="resetPwPrompt(${i})">🔑 Reset Password</button>
+              <button class="btn" style="background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;font-size:.78rem" onclick="deleteUserPrompt(${i})">🗑️ Delete</button>
+            </div>
           </div>
           <div style="margin-bottom:12px">
             <div style="font-size:.78rem;font-weight:700;color:#475569;margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em">📋 Table Access</div>
@@ -1712,13 +2026,17 @@ window.resetPwPrompt = function(idx) {
     </div>`);
 };
 
-window.doResetPw = function(idx) {
+window.doResetPw = async function(idx) {
   const np = document.getElementById('rp-new')?.value || '';
   const cp = document.getElementById('rp-confirm')?.value || '';
   const errEl = document.getElementById('rp-err');
   if(np.length < 6){ errEl.textContent='Password must be at least 6 characters.'; errEl.style.display='block'; return; }
   if(np!==cp){ errEl.textContent='Passwords do not match.'; errEl.style.display='block'; return; }
-  USERS[idx].password = np;
+  try {
+    await q('UPDATE users SET password=? WHERE id=?', [np, USERS[idx].id]);
+    USERS[idx].password = np;
+    await auditLog('UPDATE','users',USERS[idx].id,`Reset password for user: ${USERS[idx].name} (@${USERS[idx].username})`);
+  } catch(e) { errEl.textContent='Error saving password: '+e.message; errEl.style.display='block'; return; }
   closeModal();
   // Toast feedback
   const toast = document.createElement('div');
@@ -1729,7 +2047,7 @@ window.doResetPw = function(idx) {
 };
 
 
-window.doChangeAdminPw = function() {
+window.doChangeAdminPw = async function() {
   const cur  = document.getElementById('ap-current')?.value || '';
   const np   = document.getElementById('ap-new')?.value || '';
   const cp   = document.getElementById('ap-confirm')?.value || '';
@@ -1742,23 +2060,704 @@ window.doChangeAdminPw = function() {
   if(cur !== USERS[adminIdx].password){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
   if(np.length < 6){ errEl.textContent='New password must be at least 6 characters.'; errEl.style.display='block'; return; }
   if(np !== cp){ errEl.textContent='New passwords do not match.'; errEl.style.display='block'; return; }
-  USERS[adminIdx].password = np;
-  CU = USERS[adminIdx];
+  try {
+    await q('UPDATE users SET password=? WHERE id=?', [np, USERS[adminIdx].id]);
+    USERS[adminIdx].password = np;
+    CU = USERS[adminIdx];
+    await auditLog('UPDATE','users',USERS[adminIdx].id,`Changed own password (@${USERS[adminIdx].username})`);
+  } catch(e) { errEl.textContent='Error saving password: '+e.message; errEl.style.display='block'; return; }
   document.getElementById('ap-current').value = '';
   document.getElementById('ap-new').value = '';
   document.getElementById('ap-confirm').value = '';
   okEl.style.display = 'block';
 };
 
+
+// ─── ADD / DELETE USER ────────────────────────────────────────────────────────
+
+function reloadUserCards() {
+  const container = document.getElementById('user-cards-container');
+  if (!container) return;
+  renderSettings(document.getElementById('page-content'));
+}
+
+window.openAddUserModal = function() {
+  if(CU.role !== "Admin") { alert("Only admins can add users."); return; }
+  openModal('➕ Add New User', `
+    <div class="g2">
+      <div class="field"><label>Name</label><input id="nu-name" placeholder="Display name" /></div>
+      <div class="field"><label>Username</label><input id="nu-username" placeholder="Login username" autocomplete="off"/></div>
+      <div class="field"><label>Password</label><input id="nu-pass" type="password" placeholder="Min 6 characters" autocomplete="new-password"/></div>
+      <div class="field"><label>Role</label>
+        <select id="nu-role">
+          <option value="User">User</option>
+          <option value="Admin">Admin</option>
+        </select>
+      </div>
+    </div>
+    <div id="nu-err" style="color:#ef4444;font-size:.8rem;margin:10px 0;display:none"></div>
+    <div class="save-bar">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="nu-save-btn" onclick="saveNewUser()">✅ Create User</button>
+    </div>`);
+};
+
+window.saveNewUser = async function() {
+  const btn = document.getElementById('nu-save-btn'); btn.disabled=true; btn.textContent='Saving…';
+  const errEl = document.getElementById('nu-err');
+  errEl.style.display = 'none';
+  const name     = (document.getElementById('nu-name')?.value||'').trim();
+  const username = (document.getElementById('nu-username')?.value||'').trim();
+  const pass     = document.getElementById('nu-pass')?.value||'';
+  const role     = document.getElementById('nu-role')?.value||'User';
+  if(!name)     { errEl.textContent='Name is required.'; errEl.style.display='block'; btn.disabled=false; btn.textContent='✅ Create User'; return; }
+  if(!username) { errEl.textContent='Username is required.'; errEl.style.display='block'; btn.disabled=false; btn.textContent='✅ Create User'; return; }
+  if(pass.length < 6) { errEl.textContent='Password must be at least 6 characters.'; errEl.style.display='block'; btn.disabled=false; btn.textContent='✅ Create User'; return; }
+  if(USERS.find(u=>u.username===username)) { errEl.textContent='Username already exists.'; errEl.style.display='block'; btn.disabled=false; btn.textContent='✅ Create User'; return; }
+  const perms = role==='Admin'
+    ? JSON.stringify({ tables:{dashboard:true,brokers:true,developers:true,clients:true,offplan:true,secondary:true,rental:true,reports:true,commission_release:true}, canAdd:true,canEdit:true,canDelete:true,canResetPw:true })
+    : JSON.stringify(JSON.parse(JSON.stringify(DEFAULT_PERMS)));
+  try {
+    await q('INSERT INTO users (username,password,role,name,brokerId,perms) VALUES (?,?,?,?,null,?)', [username,pass,role,name,perms]);
+    await auditLog('CREATE','users',null,`Created user: ${name} (@${username}, role: ${role})`);
+    // Reload users list
+    const rows = await q('SELECT * FROM users ORDER BY id');
+    USERS = rows.map(r=>({...r, perms: r.perms ? (typeof r.perms==='string'?JSON.parse(r.perms):r.perms) : JSON.parse(JSON.stringify(DEFAULT_PERMS))}));
+    closeModal();
+    reloadUserCards();
+    const toast = document.createElement('div');
+    toast.style.cssText='position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#16a34a;color:#fff;padding:10px 22px;border-radius:10px;font-size:.85rem;font-weight:600;z-index:9999;box-shadow:0 4px 16px #0002';
+    toast.textContent=`✅ User "${name}" created successfully.`;
+    document.body.appendChild(toast);
+    setTimeout(()=>toast.remove(),3000);
+  } catch(e) {
+    errEl.textContent = 'Error: ' + e.message;
+    errEl.style.display = 'block';
+    btn.disabled=false; btn.textContent='✅ Create User';
+  }
+};
+
+window.deleteUserPrompt = function(idx) {
+  const usr = USERS[idx];
+  if(usr.role==='Admin' && USERS.filter(u=>u.role==='Admin').length<=1) {
+    alert("Cannot delete the last admin account."); return;
+  }
+  if(usr.username === CU.username) {
+    alert("You cannot delete your own account."); return;
+  }
+  openModal(`🗑️ Delete User — ${esc(usr.name)}`, `
+    <div style="padding:8px 0 16px">
+      <div style="color:#64748b;font-size:.9rem;margin-bottom:20px">Are you sure you want to permanently delete <strong>${esc(usr.name)}</strong> (@${esc(usr.username)})? This cannot be undone.</div>
+      <div id="du-err" style="color:#ef4444;font-size:.8rem;margin-bottom:10px;display:none"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-delete" style="flex:1;justify-content:center;padding:10px" id="du-confirm-btn" onclick="confirmDeleteUser(${idx})">🗑️ Yes, Delete</button>
+        <button class="btn" onclick="closeModal()" style="padding:10px 20px">Cancel</button>
+      </div>
+    </div>`);
+};
+
+window.confirmDeleteUser = async function(idx) {
+  const btn = document.getElementById('du-confirm-btn'); btn.disabled=true; btn.textContent='Deleting…';
+  const errEl = document.getElementById('du-err');
+  const usr = USERS[idx];
+  try {
+    await q('DELETE FROM users WHERE id=?', [usr.id]);
+    await auditLog('DELETE','users',usr.id,`Deleted user: ${usr.name} (@${usr.username})`);
+    USERS.splice(idx, 1);
+    closeModal();
+    reloadUserCards();
+    const toast = document.createElement('div');
+    toast.style.cssText='position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#dc2626;color:#fff;padding:10px 22px;border-radius:10px;font-size:.85rem;font-weight:600;z-index:9999;box-shadow:0 4px 16px #0002';
+    toast.textContent=`🗑️ User "${usr.name}" has been deleted.`;
+    document.body.appendChild(toast);
+    setTimeout(()=>toast.remove(),3000);
+  } catch(e) {
+    errEl.textContent = 'Error: ' + e.message;
+    errEl.style.display = 'block';
+    btn.disabled=false; btn.textContent='🗑️ Yes, Delete';
+  }
+};
+
+// ─── RECEIPT SYSTEM ──────────────────────────────────────────────────────────
+const NASAMA_LOGO = 'data:image/jpeg;base64,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';
+const NASAMA_ADDRESS = {
+  company: 'Nasama Properties Real Estate',
+  line1: 'Binghatti Emerald, Office 218',
+  line2: 'Jumeirah Village Circle (JVC)',
+  city: 'Dubai, UAE',
+  email: 'info@nasamaproperties.com',
+  website: 'www.nasamaproperties.com'
+};
+
+window.issueReceipt = function(crId) {
+  const r = DATA.commission_release.find(x => n(x.id) === n(crId));
+  if (!r) { alert('Record not found'); return; }
+
+  const broker = DATA.brokers.find(b => n(b.id) === n(r.brokerId)) || {};
+  const brkEmail = broker.email || '';
+  const brkPhone = broker.contact || '';
+
+  // Find deal details — always from live DATA
+  let dealInfo = {};
+  if (r.dealTable === 'offplan') {
+    const d = DATA.offplan.find(x => n(x.id) === n(r.dealId)) || {};
+    // Recalc live commission in case price changed
+    const liveComm = commOP(d) || n(r.totalCommission);
+    dealInfo = { type: 'Off Plan', project: d.project || r.projectName, unit: d.unit || '',
+      client: d.clientId ? (DATA.clients.find(c=>n(c.id)===n(d.clientId))?.name||'') : '',
+      value: d.price || '', status: d.status || '', liveComm };
+  } else if (r.dealTable === 'secondary') {
+    const d = DATA.secondary.find(x => n(x.id) === n(r.dealId)) || {};
+    const liveComm = commSec(d) || n(r.totalCommission);
+    dealInfo = { type: 'Secondary (Resale)', project: d.property || r.projectName, unit: d.propNo || '',
+      client: d.buyerId ? (DATA.clients.find(c=>n(c.id)===n(d.buyerId))?.name||'') : '',
+      value: d.price || '', status: d.status || '', liveComm };
+  } else {
+    const d = DATA.rental.find(x => n(x.id) === n(r.dealId)) || {};
+    const liveComm = commR(d) || n(r.totalCommission);
+    dealInfo = { type: 'Rental', project: d.property || r.projectName, unit: d.propNo || '',
+      client: d.clientId ? (DATA.clients.find(c=>n(c.id)===n(d.clientId))?.name||'') : '',
+      value: d.rent || '', status: d.status || '', liveComm };
+  }
+
+  // Use live commission from source deal; fall back to stored value
+  const displayComm = dealInfo.liveComm || n(r.totalCommission);
+  const bPct   = n(r.brokerPct || 50);
+  const bShare = displayComm * bPct / 100;
+  const receiptNo = 'NP-RCP-' + String(crId).padStart(5, '0');
+  const today = new Date().toLocaleDateString('en-AE', { year:'numeric', month:'long', day:'numeric' });
+
+  const balance = Math.max(0, bShare - n(r.amountReceived));
+  const isPaid  = r.status === 'Paid'; // use the stored status field — same source as the table
+
+  const receiptHtml = `
+    <div id="receipt-print-area" style="font-family:'Segoe UI',Arial,sans-serif;max-width:700px;margin:0 auto;background:#fdfcf9;border:1px solid #ddd;box-shadow:0 6px 32px #0002">
+
+      <!-- ── TOP HEADER: logo centre + company info top-right ── -->
+      <div style="padding:28px 40px 16px;display:flex;align-items:flex-start;justify-content:space-between;border-bottom:2px solid #c9a84c">
+        <!-- Logo block centered in remaining space -->
+        <div style="flex:1;display:flex;justify-content:center">
+          <img src="${NASAMA_LOGO}" style="height:70px;object-fit:contain"/>
+        </div>
+        <!-- Company info top-right -->
+        <div style="text-align:right;font-size:.72rem;color:#555;line-height:1.75;min-width:210px">
+          <div><strong style="color:#2c2416">Binghatti Emerald, Office 218</strong></div>
+          <div>JVC, Dubai, UAE</div>
+          <div>T: +971 4 123 4567</div>
+          <div>E: ${NASAMA_ADDRESS.email}</div>
+          <div>W: ${NASAMA_ADDRESS.website}</div>
+        </div>
+      </div>
+
+      <!-- ── GOLD TITLE ── -->
+      <div style="padding:14px 40px 12px;border-bottom:1px solid #e0dbd0">
+        <div style="font-size:1.3rem;font-weight:800;color:#b8942e;letter-spacing:.06em;text-transform:uppercase">Commission Receipt</div>
+      </div>
+
+      <!-- ── RECEIPT DETAILS SECTION ── -->
+      <div style="padding:16px 40px 0">
+        <div style="font-size:.78rem;font-weight:800;color:#2c2416;letter-spacing:.07em;text-transform:uppercase;margin-bottom:10px;border-bottom:1px solid #e0dbd0;padding-bottom:5px">Receipt Details</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:20px">
+          <!-- Left col -->
+          <div style="font-size:.82rem;color:#2c2416;line-height:2">
+            <div><strong>Receipt No:</strong>&nbsp;&nbsp;${receiptNo}</div>
+            <div><strong>Issued To:</strong>&nbsp;&nbsp;${esc(broker.name || bName(r.brokerId))}</div>
+            ${brkPhone ? `<div><strong>Phone:</strong>&nbsp;&nbsp;${esc(brkPhone)}</div>` : ''}
+            ${brkEmail ? `<div><strong>Email:</strong>&nbsp;&nbsp;${esc(brkEmail)}</div>` : ''}
+            ${broker.rera ? `<div><strong>RERA No:</strong>&nbsp;&nbsp;${esc(broker.rera)}</div>` : ''}
+          </div>
+          <!-- Right col -->
+          <div style="font-size:.82rem;color:#2c2416;line-height:2;text-align:right">
+            <div><strong>Date:</strong>&nbsp;&nbsp;${today}</div>
+            <div><strong>Release Date:</strong>&nbsp;&nbsp;${esc(r.releaseDate || '—')}</div>
+            <div><strong>Status:</strong>&nbsp;&nbsp;<span style="font-weight:700;color:${isPaid?'#16a34a':'#b45309'}">${isPaid?'Paid':'Pending'}</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── DEAL INFORMATION TABLE ── -->
+      <div style="padding:18px 40px 0">
+        <div style="font-size:.78rem;font-weight:800;color:#2c2416;letter-spacing:.07em;text-transform:uppercase;margin-bottom:8px;border-bottom:1px solid #e0dbd0;padding-bottom:5px">Deal Information</div>
+        <table style="width:100%;border-collapse:collapse;font-size:.82rem;border:1px solid #ddd">
+          <thead>
+            <tr>
+              <th style="background:#c9a84c;color:#fff;font-weight:700;padding:8px 12px;text-align:left">Project / Property</th>
+              <th style="background:#c9a84c;color:#fff;font-weight:700;padding:8px 12px;text-align:center">Deal Type</th>
+              ${dealInfo.unit ? `<th style="background:#c9a84c;color:#fff;font-weight:700;padding:8px 12px;text-align:center">Unit</th>` : ''}
+              ${dealInfo.client ? `<th style="background:#c9a84c;color:#fff;font-weight:700;padding:8px 12px;text-align:center">Client</th>` : ''}
+              ${dealInfo.value ? `<th style="background:#c9a84c;color:#fff;font-weight:700;padding:8px 12px;text-align:right">Deal Value (AED)</th>` : ''}
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="background:#faf8f2">
+              <td style="padding:9px 12px;color:#2c2416;font-weight:600;border-right:1px solid #e8e3d8">${esc(dealInfo.project || r.projectName || '—')}</td>
+              <td style="padding:9px 12px;color:#2c2416;text-align:center;border-right:1px solid #e8e3d8">${esc(dealInfo.type)}</td>
+              ${dealInfo.unit ? `<td style="padding:9px 12px;color:#2c2416;text-align:center;border-right:1px solid #e8e3d8">${esc(dealInfo.unit)}</td>` : ''}
+              ${dealInfo.client ? `<td style="padding:9px 12px;color:#2c2416;text-align:center;border-right:1px solid #e8e3d8">${esc(dealInfo.client)}</td>` : ''}
+              ${dealInfo.value ? `<td style="padding:9px 12px;color:#2c2416;font-weight:600;text-align:right">${fmtAED(dealInfo.value)}</td>` : ''}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ── COMMISSION BREAKDOWN TABLE ── -->
+      <div style="padding:18px 40px 0">
+        <div style="font-size:.78rem;font-weight:800;color:#2c2416;letter-spacing:.07em;text-transform:uppercase;margin-bottom:8px;border-bottom:1px solid #e0dbd0;padding-bottom:5px">Commission Breakdown</div>
+        <table style="width:100%;border-collapse:collapse;font-size:.82rem;border:1px solid #ddd">
+          <thead>
+            <tr>
+              <th style="background:#c9a84c;color:#fff;font-weight:700;padding:8px 12px;text-align:left">Description</th>
+              <th style="background:#c9a84c;color:#fff;font-weight:700;padding:8px 12px;text-align:right;width:200px">Amount (AED)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="background:#faf8f2;border-bottom:1px solid #e8e3d8">
+              <td style="padding:9px 12px;color:#2c2416;border-right:1px solid #e8e3d8">Total Commission</td>
+              <td style="padding:9px 12px;color:#2c2416;font-weight:600;text-align:right">${fmtAED(displayComm)}</td>
+            </tr>
+            <tr style="background:#fff;border-bottom:1px solid #e8e3d8">
+              <td style="padding:9px 12px;color:#2c2416;border-right:1px solid #e8e3d8">Broker Share (${bPct}%)</td>
+              <td style="padding:9px 12px;color:#2c2416;font-weight:700;text-align:right">${fmtAED(bShare)}</td>
+            </tr>
+            <tr style="background:#faf8f2;border-bottom:1px solid #e8e3d8">
+              <td style="padding:9px 12px;color:#2c2416;border-right:1px solid #e8e3d8">Amount Received</td>
+              <td style="padding:9px 12px;color:#2c2416;font-weight:700;text-align:right">${fmtAED(r.amountReceived)}</td>
+            </tr>
+          </tbody>
+          <tfoot>
+            <tr style="border-top:2px solid #c9a84c">
+              <td style="padding:10px 12px;background:#f5f0e6;font-weight:800;color:#2c2416;font-size:.85rem;text-transform:uppercase;border-right:1px solid #ddd">Total Amount Due to Broker (AED):</td>
+              <td style="padding:10px 12px;background:#f5f0e6;font-weight:900;font-size:.95rem;color:${isPaid?'#16a34a':'#2c2416'};text-align:right">${isPaid ? 'Fully Paid ✓' : fmtAED(balance)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <!-- ── NOTES ── -->
+      ${r.notes ? `
+      <div style="padding:14px 40px 0">
+        <div style="font-size:.78rem;font-weight:800;color:#2c2416;letter-spacing:.07em;text-transform:uppercase;margin-bottom:6px;border-bottom:1px solid #e0dbd0;padding-bottom:5px">Notes</div>
+        <div style="font-size:.82rem;color:#555;padding:4px 0">${esc(r.notes)}</div>
+      </div>` : ''}
+
+      <!-- ── FOOTER ── -->
+      <div style="margin-top:24px;padding:12px 40px;background:#f5f0e6;border-top:2px solid #c9a84c;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="font-size:.7rem;color:#7a7060;font-style:italic">This receipt is computer-generated and is valid without a physical stamp.</div>
+        <div style="font-size:.7rem;color:#b8942e;font-weight:600">${NASAMA_ADDRESS.website}</div>
+      </div>
+
+    </div>`;
+
+  // Build overlay with receipt + action buttons
+  // Create overlay
+  let overlay = document.getElementById('receipt-overlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'receipt-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:#0008;z-index:9998;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto';
+
+  const box = document.createElement('div');
+  box.id = 'receipt-modal-box';
+  box.style.cssText = 'background:#fff;border-radius:16px;max-width:760px;width:100%;position:relative;box-shadow:0 20px 60px #0004';
+
+  // Action bar
+  const actionBar = document.createElement('div');
+  actionBar.className = 'receipt-no-print';
+  actionBar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:#0a1628;border-radius:16px 16px 0 0;gap:10px;flex-wrap:wrap';
+  actionBar.innerHTML = `
+    <span style="color:#c9a84c;font-weight:700;font-size:.95rem">🧾 Commission Receipt — ${receiptNo}</span>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="window.print()" style="background:#c9a84c;color:#0a1628;border:none;border-radius:7px;padding:8px 16px;font-weight:700;cursor:pointer;font-size:.85rem">🖨️ Print / Save PDF</button>
+      ${brkEmail ? `<button onclick="sendReceiptEmail('${brkEmail}','${receiptNo}','${esc(broker.name||bName(r.brokerId))}')" style="background:#3b82f6;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-weight:700;cursor:pointer;font-size:.85rem">✉️ Email to Broker</button>` : ''}
+      <button onclick="document.getElementById('receipt-overlay').remove()" style="background:#374151;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-weight:700;cursor:pointer;font-size:.85rem">✕ Close</button>
+    </div>`;
+
+  box.innerHTML = receiptHtml;
+  box.insertBefore(actionBar, box.firstChild);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+};
+
+window.sendReceiptEmail = function(email, receiptNo, brokerName) {
+  const subject = encodeURIComponent(`Commission Receipt ${receiptNo} — Nasama Properties`);
+  const body = encodeURIComponent(
+    `Dear ${brokerName},\n\nPlease find attached your Commission Receipt ${receiptNo} from Nasama Properties Real Estate.\n\nTo save a PDF copy of your receipt:\n1. Click "Print / Save PDF" in the receipt window\n2. Choose "Save as PDF" as your printer\n3. Click Save\n\nFor any queries, please contact us at info@nasamaproperties.com\n\nKind Regards,\nNasama Properties Real Estate\nBinghatti Emerald, Office 218, JVC, Dubai, UAE\nwww.nasamaproperties.com`
+  );
+  window.open(`mailto:${email}?subject=${subject}&body=${body}`);
+};
+
+
+// ─── REFRESH ALL DATA ────────────────────────────────────────────────────────
+window.refreshData = async function() {
+  const btn  = document.getElementById('refresh-btn');
+  const icon = document.getElementById('refresh-icon');
+  if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+  if (icon) icon.style.animation = 'spin 1s linear infinite';
+  try {
+    await loadAll();
+    // Rebuild _crDeals with fresh data
+    window._crDeals = [
+      ...DATA.offplan.map(d=>({ table:'offplan', id:d.id, label:`[OP] ${d.project} - ${d.unit} (${bName(d.brokerId)})`, brokerId:d.brokerId, project:`${d.project} - ${d.unit}`, comm:commOP(d) })),
+      ...DATA.secondary.map(d=>({ table:'secondary', id:d.id, label:`[SE] ${d.property} ${d.propNo} (${bName(d.brokerId)})`, brokerId:d.brokerId, project:`${d.property} ${d.propNo}`, comm:commSec(d) })),
+      ...DATA.rental.map(d=>({ table:'rental', id:d.id, label:`[RE] ${d.property} ${d.propNo} (${bName(d.brokerId)})`, brokerId:d.brokerId, project:`${d.property} ${d.propNo}`, comm:commR(d) })),
+    ];
+    // Re-render current page
+    Object.values(chartInstances).forEach(c=>c.destroy());
+    chartInstances = {};
+    const pc = document.getElementById('page-content');
+    if (pc) {
+      const pages = { dashboard:renderDashboard, brokers:renderBrokers, developers:renderDevelopers, clients:renderClients, offplan:renderOffplan, secondary:renderSecondary, rental:renderRental, reports:renderReports, commission_release:renderCommissionRelease, audit_log:renderAuditLog, settings:renderSettings };
+      (pages[currentPage]||renderDashboard)(pc);
+    }
+    // Flash success
+    if (btn) { btn.style.background = '#dcfce7'; btn.style.borderColor = '#86efac'; btn.style.color = '#16a34a'; }
+    setTimeout(() => {
+      if (btn) { btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = ''; btn.disabled = false; btn.style.opacity = '1'; }
+      if (icon) icon.style.animation = '';
+    }, 1200);
+  } catch(e) {
+    alert('Refresh failed: ' + e.message);
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+    if (icon) icon.style.animation = '';
+  }
+};
+
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 const g   = id => document.getElementById(id)?.value ?? "";
 const gv  = id => document.getElementById(id)?.value ?? "";
-function viewGrid(items){ return `<div class="view-grid">${items.map(([k,v])=>`<div class="view-cell"><div class="vk">${esc(k)}</div><div class="vv">${esc(String(v))}</div></div>`).join("")}</div>`; }
+function viewGrid(items){ return `<div class="view-grid">${items.map(([k,v])=>`<div class="view-cell"><div class="vk">${esc(k)}</div><div class="vv">${v == null || v === "" ? "—" : esc(String(v))}</div></div>`).join("")}</div>`; }
 
 // ─── START ────────────────────────────────────────────────────────────────────
 init();
 
 // ── DELETE ────────────────────────────────────────────────────────────────────
+// ─── CSV EXPORT ───────────────────────────────────────────────────────────────
+// Standalone version of crLiveComm for use in exportCSV (outside render scope)
+function crLiveCommExport(r) {
+  const src = r.dealTable==='offplan'?DATA.offplan:r.dealTable==='secondary'?DATA.secondary:DATA.rental;
+  const d = src?.find(x=>n(x.id)===n(r.dealId));
+  if (!d) return n(r.totalCommission);
+  return r.dealTable==='offplan' ? commOP(d) : r.dealTable==='secondary' ? commSec(d) : commR(d);
+}
+// Escapes a single CSV cell value
+function csvCell(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g,'""')}"` : s;
+}
+
+// Builds and downloads a CSV file from an array of column defs + data rows
+function downloadCSV(filename, columns, rows) {
+  const header = columns.map(c => csvCell(c.label)).join(',');
+  const body   = rows.map(row =>
+    columns.map(c => csvCell(typeof c.val === 'function' ? c.val(row) : row[c.key])).join(',')
+  );
+  const csv  = [header, ...body].join('\r\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM for Excel
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+window.exportCSV = function(table) {
+  const ts = new Date().toISOString().slice(0,10); // YYYY-MM-DD
+  switch(table) {
+
+    case 'brokers': {
+      const cols = [
+        { label:'ID',           val: r => r.id },
+        { label:'Name',         val: r => r.name },
+        { label:'Nationality',  val: r => r.nationality },
+        { label:'Contact',      val: r => r.contact },
+        { label:'Email',        val: r => r.email },
+        { label:'RERA No.',     val: r => r.rera },
+        { label:'RERA Expiry',  val: r => r.reraExpiry },
+        { label:'Status',       val: r => r.status },
+        { label:'Created',      val: r => r.createdAt },
+      ];
+      downloadCSV(`Nasama_Brokers_${ts}.csv`, cols, DATA.brokers);
+      break;
+    }
+
+    case 'developers': {
+      const cols = [
+        { label:'ID',                val: r => r.id },
+        { label:'Name',              val: r => r.name },
+        { label:'Agreement',         val: r => r.agreement },
+        { label:'Agreement Expiry',  val: r => r.agreementExpiry },
+        { label:'Status',            val: r => r.status },
+        { label:'Created',           val: r => r.createdAt },
+      ];
+      downloadCSV(`Nasama_Developers_${ts}.csv`, cols, DATA.developers);
+      break;
+    }
+
+    case 'clients': {
+      const cols = [
+        { label:'ID',          val: r => r.id },
+        { label:'Name',        val: r => r.name },
+        { label:'Nationality', val: r => r.nationality },
+        { label:'Contact',     val: r => r.contact },
+        { label:'Email',       val: r => r.email },
+        { label:'Type',        val: r => r.type },
+        { label:'Created',     val: r => r.createdAt },
+      ];
+      downloadCSV(`Nasama_Clients_${ts}.csv`, cols, DATA.clients);
+      break;
+    }
+
+    case 'offplan': {
+      const src = CU.brokerId ? DATA.offplan.filter(d=>n(d.brokerId)===CU.brokerId) : DATA.offplan;
+      const cols = [
+        { label:'ID',               val: r => id3('OP', r.id) },
+        { label:'Date',             val: r => r.date },
+        { label:'Broker',           val: r => bName(r.brokerId) },
+        { label:'Client',           val: r => cName(r.clientId) },
+        { label:'Developer',        val: r => dName(r.developerId) },
+        { label:'Project',          val: r => r.project },
+        { label:'Unit',             val: r => r.unit },
+        { label:'Price (AED)',      val: r => n(r.price) },
+        { label:'Comm %',           val: r => n(r.commPct) },
+        { label:'Commission (AED)', val: r => commOP(r).toFixed(2) },
+        { label:'Invoice No.',      val: r => r.invoiceNo },
+        { label:'Status',           val: r => r.status },
+        { label:'AML',              val: r => r.aml },
+        { label:'KYC Sent',         val: r => r.kycSent },
+        { label:'KYC Received',     val: r => r.kycReceived },
+        { label:'Notes',            val: r => r.notes },
+        { label:'CR Status',        val: r => { const cr=getCRForDeal('offplan',r.id); return cr?cr.status:'No Release'; } },
+      ];
+      downloadCSV(`Nasama_OffPlan_${ts}.csv`, cols, src);
+      break;
+    }
+
+    case 'secondary': {
+      const src = CU.brokerId ? DATA.secondary.filter(d=>n(d.brokerId)===CU.brokerId) : DATA.secondary;
+      const cols = [
+        { label:'ID',                 val: r => id3('SE', r.id) },
+        { label:'Date',               val: r => r.date },
+        { label:'Broker',             val: r => bName(r.brokerId) },
+        { label:'Buyer',              val: r => cName(r.buyerId) },
+        { label:'Seller',             val: r => cName(r.sellerId) },
+        { label:'Property',           val: r => r.property },
+        { label:'Unit No.',           val: r => r.propNo },
+        { label:'Contract',           val: r => r.contract },
+        { label:'Price (AED)',         val: r => n(r.price) },
+        { label:'Seller Comm %',      val: r => n(r.sellerPct) },
+        { label:'Buyer Comm %',       val: r => n(r.buyerPct) },
+        { label:'Seller Comm (AED)',  val: r => commSel(r).toFixed(2) },
+        { label:'Buyer Comm (AED)',   val: r => commBuy(r).toFixed(2) },
+        { label:'Discount (AED)',     val: r => n(r.discount) },
+        { label:'Total Comm (AED)',   val: r => commSec(r).toFixed(2) },
+        { label:'Invoice No.',        val: r => r.invoiceNo },
+        { label:'Status',             val: r => r.status },
+        { label:'AML Buyer',          val: r => r.amlBuyer },
+        { label:'AML Seller',         val: r => r.amlSeller },
+        { label:'KYC Sent',           val: r => r.kycSent },
+        { label:'KYC Received',       val: r => r.kycReceived },
+        { label:'CR Status',          val: r => { const cr=getCRForDeal('secondary',r.id); return cr?cr.status:'No Release'; } },
+      ];
+      downloadCSV(`Nasama_Secondary_${ts}.csv`, cols, src);
+      break;
+    }
+
+    case 'rental': {
+      const src = CU.brokerId ? DATA.rental.filter(d=>n(d.brokerId)===CU.brokerId) : DATA.rental;
+      const cols = [
+        { label:'ID',                   val: r => id3('RE', r.id) },
+        { label:'Date Rented',          val: r => r.dateRented },
+        { label:'Broker',               val: r => bName(r.brokerId) },
+        { label:'Client',               val: r => cName(r.clientId) },
+        { label:'Property',             val: r => r.property },
+        { label:'Unit No.',             val: r => r.propNo },
+        { label:'Contract Type',        val: r => r.contractType },
+        { label:'Annual Rent (AED)',    val: r => n(r.rent) },
+        { label:'Comm %',               val: r => n(r.commPct) },
+        { label:'Commission (AED)',     val: r => commR(r).toFixed(2) },
+        { label:'VAT 5% (AED)',         val: r => commVAT(r).toFixed(2) },
+        { label:'Total w/VAT (AED)',    val: r => commRT(r).toFixed(2) },
+        { label:'Invoice No.',          val: r => r.invoiceNo },
+        { label:'Start Date',           val: r => r.startDate },
+        { label:'End Date',             val: r => r.endDate },
+        { label:'PF Expert',            val: r => r.pfExpert },
+        { label:'Status',               val: r => r.status },
+        { label:'Notes',                val: r => r.notes },
+        { label:'CR Status',            val: r => { const cr=getCRForDeal('rental',r.id); return cr?cr.status:'No Release'; } },
+      ];
+      downloadCSV(`Nasama_Rental_${ts}.csv`, cols, src);
+      break;
+    }
+
+    case 'commission_release': {
+      const cols = [
+        { label:'ID',                   val: r => id3('CR', r.id) },
+        { label:'Release Date',         val: r => r.releaseDate },
+        { label:'Broker',               val: r => bName(r.brokerId) },
+        { label:'Project / Deal',       val: r => r.projectName },
+        { label:'Deal Type',            val: r => r.dealTable==='offplan'?'Off Plan':r.dealTable==='secondary'?'Secondary':'Rental' },
+        { label:'Deal ID',              val: r => r.dealId },
+        { label:'Total Comm (AED)',     val: r => crLiveCommExport(r) },
+        { label:'Est. VAT 5% (AED)',    val: r => (crLiveCommExport(r)*0.05).toFixed(2) },
+        { label:'Broker %',             val: r => n(r.brokerPct||50) },
+        { label:'Broker Share (AED)',   val: r => (crLiveCommExport(r)*n(r.brokerPct||50)/100).toFixed(2) },
+        { label:'Company %',            val: r => n(r.companyPct||50) },
+        { label:'Company Share (AED)',  val: r => (crLiveCommExport(r)*n(r.companyPct||50)/100).toFixed(2) },
+        { label:'Amount Received (AED)',val: r => n(r.amountReceived) },
+        { label:'Balance (AED)',        val: r => (crLiveCommExport(r)-n(r.amountReceived)).toFixed(2) },
+        { label:'Status',               val: r => r.status },
+        { label:'Notes',                val: r => r.notes },
+      ];
+      downloadCSV(`Nasama_CommissionRelease_${ts}.csv`, cols, DATA.commission_release);
+      break;
+    }
+
+    case 'audit_log': {
+      const rows = window._auditRows || [];
+      const cols = [
+        { label:'ID',        val: r => r.id },
+        { label:'Timestamp', val: r => r.ts },
+        { label:'User',      val: r => r.username },
+        { label:'Role',      val: r => r.role },
+        { label:'Action',    val: r => r.action },
+        { label:'Module',    val: r => r.tableName },
+        { label:'Record ID', val: r => r.recordId },
+        { label:'Details',   val: r => r.summary },
+      ];
+      downloadCSV(`Nasama_AuditLog_${ts}.csv`, cols, rows);
+      break;
+    }
+  }
+};
+async function renderAuditLog(pc) {
+  pc.innerHTML = `<div class="page-hdr"><div class="page-title">🔍 Audit Log</div></div>
+    <div class="card" style="text-align:center;color:#94a3b8;padding:40px">Loading audit log…</div>`;
+
+  let rows;
+  try {
+    rows = await q("SELECT * FROM audit_log ORDER BY id DESC LIMIT 500");
+  } catch(e) {
+    pc.innerHTML = `<div class="page-hdr"><div class="page-title">🔍 Audit Log</div></div>
+      <div class="card" style="text-align:center;color:#ef4444;padding:40px">Failed to load: ${esc(e.message)}</div>`;
+    return;
+  }
+
+  const TABLE_LABELS = {brokers:"Brokers",developers:"Developers",clients:"Clients",offplan:"Off Plan",secondary:"Secondary",rental:"Rental",commission_release:"Commission Release",users:"Users",audit_log:"Audit Log"};
+  const ACTION_COLORS = { CREATE:'#16a34a', UPDATE:'#1d4ed8', DELETE:'#dc2626' };
+  const ACTION_ICONS  = { CREATE:'➕', UPDATE:'✏️', DELETE:'🗑️' };
+  const TABLE_ICONS   = { brokers:'👤', developers:'🏗', clients:'👥', offplan:'📋', secondary:'🔄', rental:'🏠', commission_release:'💰', users:'🔐' };
+
+  // Unique values for filter dropdowns
+  const allUsers  = [...new Set(rows.map(r=>r.username))].filter(Boolean).sort();
+  const allTables = [...new Set(rows.map(r=>r.tableName))].filter(Boolean).sort();
+
+  function auditRows(data) {
+    if(!data.length) return `<tr><td colspan="6" style="text-align:center;color:#94a3b8;padding:24px">No entries found.</td></tr>`;
+    return data.map(r => {
+      const ac = ACTION_COLORS[r.action] || '#64748b';
+      const ai = ACTION_ICONS[r.action] || '•';
+      const ti = TABLE_ICONS[r.tableName] || '📄';
+      const tl = TABLE_LABELS[r.tableName] || r.tableName;
+      // Format timestamp nicely
+      const ts = r.ts ? r.ts.replace('T',' ').slice(0,19) : '—';
+      return `<tr>
+        <td class="mono" style="font-size:.75rem;color:#94a3b8;white-space:nowrap">${esc(ts)} UTC</td>
+        <td>
+          <div style="font-weight:700;font-size:.85rem">${esc(r.username||'—')}</div>
+          <div style="font-size:.72rem;color:#94a3b8">${esc(r.role||'')}</div>
+        </td>
+        <td><span style="background:${ac}18;color:${ac};font-weight:700;font-size:.75rem;padding:3px 10px;border-radius:20px;border:1px solid ${ac}44">${ai} ${esc(r.action)}</span></td>
+        <td><span style="font-size:.8rem">${ti} ${esc(tl)}</span>${r.recordId ? `<span class="mono" style="font-size:.7rem;color:#94a3b8;margin-left:4px">#${r.recordId}</span>` : ''}</td>
+        <td style="font-size:.82rem;max-width:320px">${esc(r.summary||'')}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  pc.innerHTML = `
+    <div class="page-hdr">
+      <div class="page-title">🔍 Audit Log <small>(last 500 entries)</small></div>
+      <button class="btn btn-export" onclick="exportCSV('audit_log')">⬇ Export CSV</button>
+    </div>
+
+    <!-- Stats bar -->
+    <div class="stat-grid" style="margin-bottom:18px">
+      <div class="stat-card dark"><div class="stat-val">${rows.length}</div><div class="stat-lbl">Total Entries</div></div>
+      <div class="stat-card dark"><div class="stat-val" style="color:#16a34a">${rows.filter(r=>r.action==='CREATE').length}</div><div class="stat-lbl">Creates</div></div>
+      <div class="stat-card dark"><div class="stat-val" style="color:#1d4ed8">${rows.filter(r=>r.action==='UPDATE').length}</div><div class="stat-lbl">Updates</div></div>
+      <div class="stat-card dark"><div class="stat-val" style="color:#dc2626">${rows.filter(r=>r.action==='DELETE').length}</div><div class="stat-lbl">Deletes</div></div>
+    </div>
+
+    <div class="card">
+      <!-- Filters -->
+      <div class="search-row" style="flex-wrap:wrap;gap:8px;margin-bottom:16px">
+        <div class="search-wrap" style="flex:1;min-width:180px">
+          <span class="icon">🔍</span>
+          <input id="q-audit" placeholder="Search summary or username…" oninput="filterAuditLog()"/>
+        </div>
+        <select id="sf-audit-action" style="width:130px" onchange="filterAuditLog()">
+          <option value="">All Actions</option>
+          <option value="CREATE">➕ Create</option>
+          <option value="UPDATE">✏️ Update</option>
+          <option value="DELETE">🗑️ Delete</option>
+        </select>
+        <select id="sf-audit-table" style="width:160px" onchange="filterAuditLog()">
+          <option value="">All Modules</option>
+          ${allTables.map(t=>`<option value="${esc(t)}">${esc(TABLE_LABELS[t]||t)}</option>`).join('')}
+        </select>
+        <select id="sf-audit-user" style="width:140px" onchange="filterAuditLog()">
+          <option value="">All Users</option>
+          ${allUsers.map(u=>`<option value="${esc(u)}">${esc(u)}</option>`).join('')}
+        </select>
+        <button class="btn btn-secondary" style="font-size:.78rem;padding:6px 14px" onclick="filterAuditLog(true)">🔄 Reset</button>
+      </div>
+
+      <div class="overflow">
+        <table id="audit-table">
+          <thead><tr>
+            <th style="width:155px">Timestamp (UTC)</th>
+            <th>User</th>
+            <th>Action</th>
+            <th>Module</th>
+            <th>Details</th>
+          </tr></thead>
+          <tbody id="tbody-audit">${auditRows(rows)}</tbody>
+        </table>
+      </div>
+      <div id="audit-count" style="font-size:.75rem;color:#94a3b8;margin-top:10px;text-align:right">Showing ${rows.length} entries</div>
+    </div>`;
+
+  // Store rows on window for filter access
+  window._auditRows = rows;
+  window._auditMeta = { TABLE_LABELS, ACTION_COLORS, ACTION_ICONS, TABLE_ICONS, auditRows };
+}
+
+window.filterAuditLog = function(reset) {
+  if(reset) {
+    ['q-audit','sf-audit-action','sf-audit-table','sf-audit-user'].forEach(id => {
+      const el = document.getElementById(id);
+      if(el) el.value = '';
+    });
+  }
+  const qv    = (document.getElementById('q-audit')?.value||'').toLowerCase();
+  const act   = document.getElementById('sf-audit-action')?.value||'';
+  const tbl   = document.getElementById('sf-audit-table')?.value||'';
+  const usr   = document.getElementById('sf-audit-user')?.value||'';
+  const rows  = (window._auditRows||[]).filter(r =>
+    (!act || r.action===act) &&
+    (!tbl || r.tableName===tbl) &&
+    (!usr || r.username===usr) &&
+    (!qv  || (r.summary||'').toLowerCase().includes(qv) || (r.username||'').toLowerCase().includes(qv))
+  );
+  const tbody = document.getElementById('tbody-audit');
+  const count = document.getElementById('audit-count');
+  if(tbody && window._auditMeta) tbody.innerHTML = window._auditMeta.auditRows(rows);
+  if(count) count.textContent = `Showing ${rows.length} entries`;
+};
+
 window.deleteRecord = async function(table, id, label) {
   if(!canDo("canDelete")){ alert("You don't have permission to delete records."); return; }
   if (!confirm('Are you sure you want to delete this ' + label + '? This cannot be undone.')) return;
@@ -1772,7 +2771,23 @@ window.deleteRecord = async function(table, id, label) {
     commission_release: () => renderCommissionRelease(document.getElementById('page-content')),
   };
   try {
+    // Capture a summary before deleting
+    let summary = `Deleted ${label} #${id}`;
+    try {
+      const rec = await q(`SELECT * FROM ${table} WHERE id=?`,[id]);
+      if(rec[0]) {
+        const r = rec[0];
+        if(table==='brokers') summary=`Deleted broker: ${r.name}`;
+        else if(table==='developers') summary=`Deleted developer: ${r.name}`;
+        else if(table==='clients') summary=`Deleted client: ${r.name}`;
+        else if(table==='offplan') summary=`Deleted off plan deal: ${r.project} – ${r.unit}`;
+        else if(table==='secondary') summary=`Deleted secondary deal: ${r.property} ${r.propNo}`;
+        else if(table==='rental') summary=`Deleted rental: ${r.property} ${r.propNo}`;
+        else if(table==='commission_release') summary=`Deleted commission release: ${r.projectName} – AED ${n(r.totalCommission).toLocaleString()}`;
+      }
+    } catch(_){}
     await q(`DELETE FROM ${table} WHERE id=${id}`);
+    await auditLog('DELETE',table,id,summary);
     await reload(table);
     closeModal();
     renderMap[table]();
