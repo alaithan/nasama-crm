@@ -420,35 +420,67 @@ async function initDB() {
   if (Number(userCnt[0].c) === 0) {
     const adminPerms = JSON.stringify({ tables:{dashboard:true,brokers:true,developers:true,clients:true,offplan:true,secondary:true,rental:true,reports:true,commission_release:true}, canAdd:true,canEdit:true,canDelete:true,canResetPw:true });
     const defaultPerms = JSON.stringify({ tables:{dashboard:true,brokers:false,developers:false,clients:true,offplan:true,secondary:true,rental:true,reports:false,commission_release:false}, canAdd:false,canEdit:false,canDelete:false,canResetPw:false });
+    // Hash default password at runtime — never store plaintext
+    const pw1 = await hashPassword('Nasama123');
+    const pw2 = await hashPassword('Nasama123');
+    const pw3 = await hashPassword('Nasama123');
     await batch([
-      { sql: `INSERT INTO users (username,password,role,name,brokerId,perms) VALUES ('Alaithan','Nasama123','Admin','Alaithan',null,?)`, args: [adminPerms] },
-      { sql: `INSERT INTO users (username,password,role,name,brokerId,perms) VALUES ('Ahmad','Nasama123','User','Ahmad',null,?)`, args: [defaultPerms] },
-      { sql: `INSERT INTO users (username,password,role,name,brokerId,perms) VALUES ('Nisadi','Nasama123','User','Nisadi',null,?)`, args: [defaultPerms] },
+      { sql: `INSERT INTO users (username,password,role,name,brokerId,perms) VALUES ('Alaithan',?,'Admin','Alaithan',null,?)`, args: [pw1, adminPerms] },
+      { sql: `INSERT INTO users (username,password,role,name,brokerId,perms) VALUES ('Ahmad',?,'User','Ahmad',null,?)`, args: [pw2, defaultPerms] },
+      { sql: `INSERT INTO users (username,password,role,name,brokerId,perms) VALUES ('Nisadi',?,'User','Nisadi',null,?)`, args: [pw3, defaultPerms] },
     ]);
   }
-  const cnt = await q("SELECT COUNT(*) as c FROM brokers");
-  if (Number(cnt[0].c) === 0) {
+  // ── Seed demo data — each table is independently guarded ──────────────────
+  const [bCnt,devCnt,cCnt,opCnt,secCnt,renCnt] = await Promise.all([
+    q("SELECT COUNT(*) as c FROM brokers"),
+    q("SELECT COUNT(*) as c FROM developers"),
+    q("SELECT COUNT(*) as c FROM clients"),
+    q("SELECT COUNT(*) as c FROM offplan"),
+    q("SELECT COUNT(*) as c FROM secondary"),
+    q("SELECT COUNT(*) as c FROM rental"),
+  ]);
+  if (Number(bCnt[0].c) === 0) {
     await batch([
       { sql: `INSERT INTO brokers (name,nationality,contact,email,rera,reraExpiry,status) VALUES ('Ahmed Al Mansouri','UAE','+971 50 123 4567','ahmed@example.com','RERA-2024-001','2025-12-31','Active')` },
       { sql: `INSERT INTO brokers (name,nationality,contact,email,rera,reraExpiry,status) VALUES ('Sarah Johnson','UK','+971 55 987 6543','sarah@example.com','RERA-2024-002','2025-03-15','Active')` },
       { sql: `INSERT INTO brokers (name,nationality,contact,email,rera,reraExpiry,status) VALUES ('Mohammed Al Rashid','UAE','+971 52 456 7890','mohammed@example.com','RERA-2024-003','2025-08-20','Active')` },
       { sql: `INSERT INTO brokers (name,nationality,contact,email,rera,reraExpiry,status) VALUES ('Priya Sharma','India','+971 56 321 0987','priya@example.com','RERA-2023-015','2024-11-30','Inactive')` },
+    ]);
+  }
+  if (Number(devCnt[0].c) === 0) {
+    await batch([
       { sql: `INSERT INTO developers (name,agreement,agreementExpiry,status) VALUES ('Emaar Properties','Yes','2026-06-30','Active')` },
       { sql: `INSERT INTO developers (name,agreement,agreementExpiry,status) VALUES ('Damac Properties','Yes','2025-12-31','Active')` },
       { sql: `INSERT INTO developers (name,agreement,agreementExpiry,status) VALUES ('Nakheel','Yes','2025-09-15','Active')` },
       { sql: `INSERT INTO developers (name,agreement,agreementExpiry,status) VALUES ('Sobha Realty','No','','Active')` },
+    ]);
+  }
+  if (Number(cCnt[0].c) === 0) {
+    await batch([
       { sql: `INSERT INTO clients (name,nationality,contact,email,type) VALUES ('James Wilson','UK','+44 7700 900000','james@email.com','Buyer')` },
       { sql: `INSERT INTO clients (name,nationality,contact,email,type) VALUES ('Fatima Al Zaabi','UAE','+971 50 111 2222','fatima@email.com','Seller')` },
       { sql: `INSERT INTO clients (name,nationality,contact,email,type) VALUES ('Raj Patel','India','+971 55 333 4444','raj@email.com','Tenant')` },
       { sql: `INSERT INTO clients (name,nationality,contact,email,type) VALUES ('Elena Kozlov','Russia','+971 52 555 6666','elena@email.com','Buyer')` },
       { sql: `INSERT INTO clients (name,nationality,contact,email,type) VALUES ('Michael Chen','China','+971 56 777 8888','mchen@email.com','Landlord')` },
+    ]);
+  }
+  if (Number(opCnt[0].c) === 0) {
+    await batch([
       { sql: `INSERT INTO offplan (brokerId,clientId,developerId,status,project,unit,price,commPct,invoiceNo,date,aml,kycSent,kycReceived,notes) VALUES (1,1,1,'Closed','Marina Vista','A-1204',2800000,4,'INV-001','2024-11-15','Yes','Yes','Yes','')` },
       { sql: `INSERT INTO offplan (brokerId,clientId,developerId,status,project,unit,price,commPct,invoiceNo,date,aml,kycSent,kycReceived,notes) VALUES (2,4,2,'Pending','Hills Estate','B-0503',1950000,3.5,'INV-002','2024-12-01','Yes','Yes','No','Awaiting KYC')` },
       { sql: `INSERT INTO offplan (brokerId,clientId,developerId,status,project,unit,price,commPct,invoiceNo,date,aml,kycSent,kycReceived,notes) VALUES (3,5,3,'Closed','Palm Residences','C-2101',5500000,3,'INV-003','2024-10-20','Yes','Yes','Yes','')` },
       { sql: `INSERT INTO offplan (brokerId,clientId,developerId,status,project,unit,price,commPct,invoiceNo,date,aml,kycSent,kycReceived,notes) VALUES (1,2,4,'Cancelled','Creek Towers','D-0801',3200000,4,'INV-004','2024-09-05','No','No','No','Deal fell through')` },
       { sql: `INSERT INTO offplan (brokerId,clientId,developerId,status,project,unit,price,commPct,invoiceNo,date,aml,kycSent,kycReceived,notes) VALUES (2,3,1,'Closed','Downtown Square','E-1505',1200000,4,'INV-005','2025-01-10','Yes','Yes','Yes','')` },
-      { sql: `INSERT INTO secondary (brokerId,buyerId,sellerId,developerId,status,property,propNo,contract,price,sellerPct,buyerPct,discount,invoiceNo,date,amlBuyer,amlSeller,kycSent,kycReceived) VALUES (1,1,2,1,'Closed','JBR Apartment','J-305','CON-001',3800000,2,2,0,'SINV-001','2024-11-28','Yes','Yes','Yes','Yes')` },
-      { sql: `INSERT INTO secondary (brokerId,buyerId,sellerId,developerId,status,property,propNo,contract,price,sellerPct,buyerPct,discount,invoiceNo,date,amlBuyer,amlSeller,kycSent,kycReceived) VALUES (3,4,5,2,'Pending','DIP Villa','V-102','CON-002',6200000,1.5,2,10000,'SINV-002','2025-01-05','Yes','No','Yes','No')` },
+    ]);
+  }
+  if (Number(secCnt[0].c) === 0) {
+    await batch([
+      { sql: `INSERT INTO secondary (brokerId,buyerId,sellerId,developerId,status,property,propNo,contract,price,sellerPct,buyerPct,discount,invoiceNo,date,amlBuyer,amlSeller,kycSent,kycReceived) VALUES (1,1,2,null,'Closed','JBR Apartment','J-305','CON-001',3800000,2,2,0,'SINV-001','2024-11-28','Yes','Yes','Yes','Yes')` },
+      { sql: `INSERT INTO secondary (brokerId,buyerId,sellerId,developerId,status,property,propNo,contract,price,sellerPct,buyerPct,discount,invoiceNo,date,amlBuyer,amlSeller,kycSent,kycReceived) VALUES (3,4,5,null,'Pending','DIP Villa','V-102','CON-002',6200000,1.5,2,10000,'SINV-002','2025-01-05','Yes','No','Yes','No')` },
+    ]);
+  }
+  if (Number(renCnt[0].c) === 0) {
+    await batch([
       { sql: `INSERT INTO rental (brokerId,clientId,status,property,propNo,contractType,rent,commPct,invoiceNo,dateRented,startDate,endDate,pfExpert,notes) VALUES (2,3,'Active','Marina Heights','MH-401','Annual',85000,5,'RINV-001','2024-06-01','2024-06-01','2025-05-31','Yes','')` },
       { sql: `INSERT INTO rental (brokerId,clientId,status,property,propNo,contractType,rent,commPct,invoiceNo,dateRented,startDate,endDate,pfExpert,notes) VALUES (1,5,'Active','JVC Studio','JS-210','Annual',42000,5,'RINV-002','2024-09-15','2024-09-15','2025-09-14','No','')` },
       { sql: `INSERT INTO rental (brokerId,clientId,status,property,propNo,contractType,rent,commPct,invoiceNo,dateRented,startDate,endDate,pfExpert,notes) VALUES (3,1,'Expired','Downtown Loft','DL-809','Short Term',12000,8,'RINV-003','2024-01-01','2024-01-01','2024-12-31','Yes','Renewal in progress')` },
@@ -465,11 +497,15 @@ const n = v => { const x = Number(v); return isFinite(x) ? x : 0; };
 const esc = s => (s == null ? "" : String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 
 // fmt / fmtAED — pass through n() so non-numeric values render as "0" not "NaN"
+// fmt() rounds to whole AED (suitable for large price/commission totals)
+// fmt2() / fmtAED2() keeps 2 decimal places (suitable for balance-due / broker-paid fields)
 const fmt    = v => new Intl.NumberFormat("en-AE").format(Math.round(n(v)));
 const fmtAED = v => `AED ${fmt(v)}`;
+const fmt2    = v => new Intl.NumberFormat("en-AE",{minimumFractionDigits:2,maximumFractionDigits:2}).format(n(v));
+const fmtAED2 = v => `AED ${fmt2(v)}`;
 
-const today  = new Date(); today.setHours(0,0,0,0);
-const daysUntil = d => { if(!d) return 9999; const ms = new Date(d) - today; return isNaN(ms) ? 9999 : Math.ceil(ms/86400000); };
+const getToday = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+const daysUntil = d => { if(!d) return 9999; const ms = new Date(d) - getToday(); return isNaN(ms) ? 9999 : Math.ceil(ms/86400000); };
 
 // id3 — guard against null/undefined id producing "null-000" or "undefined-000"
 const id3 = (pre, id) => `${pre}-${id != null ? String(id).padStart(3,"0") : "???"}`;
@@ -478,7 +514,7 @@ const id3 = (pre, id) => `${pre}-${id != null ? String(id).padStart(3,"0") : "??
 const commOP  = d => d ? (n(d.price)  * n(d.commPct))  / 100 : 0;
 const commSel = d => d ? (n(d.price)  * n(d.sellerPct)) / 100 : 0;
 const commBuy = d => d ? (n(d.price)  * n(d.buyerPct))  / 100 : 0;
-const commSec = d => d ? commSel(d) + commBuy(d) - n(d.discount) : 0;
+const commSec = d => d ? Math.max(0, commSel(d) + commBuy(d) - n(d.discount)) : 0;
 const commR   = d => d ? (n(d.rent)   * n(d.commPct))  / 100 : 0;
 const commVAT = d => commR(d) * 0.05;
 const commRT  = d => commR(d) + commVAT(d);
@@ -526,9 +562,11 @@ function canSeeTable(key){ if(!CU) return false; if(CU.role==="Admin") return tr
 async function auditLog(action, tableName, recordId, summary) {
   if(!CU) return;
   try {
+    // Store Dubai local time (UTC+4) — SQLite datetime('now') is UTC which is 4h behind Dubai
+    const dubaiNow = new Date(Date.now() + 4*60*60*1000).toISOString().replace('T',' ').slice(0,19);
     await q(
-      `INSERT INTO audit_log (ts,username,role,action,tableName,recordId,summary) VALUES (datetime('now'),?,?,?,?,?,?)`,
-      [CU.username, CU.role, action, tableName, recordId||null, summary||'']
+      `INSERT INTO audit_log (ts,username,role,action,tableName,recordId,summary) VALUES (?,?,?,?,?,?,?)`,
+      [dubaiNow, CU.username, CU.role, action, tableName, recordId||null, summary||'']
     );
   } catch(e) { console.warn('Audit log failed:', e.message); }
 }
@@ -594,22 +632,46 @@ async function loadAll() {
     ...r,
     perms: r.perms ? (typeof r.perms === 'string' ? JSON.parse(r.perms) : r.perms) : JSON.parse(JSON.stringify(DEFAULT_PERMS)),
   }));
+  _rebuildMaps(); // build all three maps after full load
 }
 
 async function reload(table) {
   const rows = await q(`SELECT * FROM ${table} ORDER BY id ${table==="offplan"||table==="secondary"||table==="rental"||table==="commission_release"?"DESC":""}`);
   DATA[table] = rows.map(r=>({...r}));
+  if (['brokers','clients','developers'].includes(table)) _rebuildMaps([table]);
 }
 
 function show(id){ document.getElementById(id)?.classList.remove("hidden"); }
 function hide(id){ document.getElementById(id)?.classList.add("hidden"); }
 
+// ─── PASSWORD HASHING (Web Crypto — PBKDF2/SHA-256) ──────────────────────────
+// Format stored: "PBKDF2:<hex-salt>:<hex-hash>"  Legacy plaintext has no prefix.
+async function hashPassword(plain) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMat = await crypto.subtle.importKey('raw', new TextEncoder().encode(plain), 'PBKDF2', false, ['deriveBits']);
+  const bits   = await crypto.subtle.deriveBits({ name:'PBKDF2', salt, iterations:100000, hash:'SHA-256' }, keyMat, 256);
+  const toHex  = b => Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');
+  return 'PBKDF2:' + toHex(salt.buffer) + ':' + toHex(bits);
+}
+async function verifyPassword(plain, stored) {
+  if (!stored) return false;
+  if (!stored.startsWith('PBKDF2:')) return plain === stored; // legacy plaintext
+  const [, saltHex, hashHex] = stored.split(':');
+  const salt = new Uint8Array(saltHex.match(/../g).map(h=>parseInt(h,16)));
+  const keyMat = await crypto.subtle.importKey('raw', new TextEncoder().encode(plain), 'PBKDF2', false, ['deriveBits']);
+  const bits   = await crypto.subtle.deriveBits({ name:'PBKDF2', salt, iterations:100000, hash:'SHA-256' }, keyMat, 256);
+  const toHex  = b => Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');
+  return toHex(bits) === hashHex;
+}
+
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
-window.doLogin = function() {
+window.doLogin = async function() {
   const u = document.getElementById("li-user").value.trim();
   const p = document.getElementById("li-pass").value;
   const remember = document.getElementById("li-remember")?.checked;
-  const usr = USERS.find(x=>x.username===u&&x.password===p);
+  const candidate = USERS.find(x=>x.username===u);
+  const valid = candidate && await verifyPassword(p, candidate.password);
+  const usr = valid ? candidate : null;
   if (!usr) { const e=document.getElementById("li-err"); e.textContent="Invalid credentials. Please check your username and password."; e.classList.remove("hidden"); return; }
   // Save or clear remembered username only (never store password in localStorage)
   if(remember){
@@ -732,6 +794,36 @@ function openModal(title, html) {
 }
 window.closeModal = function() { hide("modal-overlay"); };
 
+// ─── TOAST ────────────────────────────────────────────────────────────────────
+function showToast(msg, color='#16a34a') {
+  const t = document.createElement('div');
+  t.style.cssText = `position:fixed;bottom:90px;left:50%;transform:translateX(-50%) translateY(0);background:${color};color:#fff;padding:10px 22px;border-radius:10px;font-size:.85rem;font-weight:600;z-index:9999;box-shadow:0 4px 16px #0003;transition:opacity .3s`;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; setTimeout(()=>t.remove(),300); }, 2700);
+}
+
+// Escape key closes modal
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const overlay = document.getElementById('modal-overlay');
+    if (overlay && !overlay.classList.contains('hidden')) window.closeModal();
+  }
+});
+
+// ─── DEBOUNCE ─────────────────────────────────────────────────────────────────
+function debounce(fn, ms=160) {
+  let t; return function(...a){ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a),ms); };
+}
+const filterBrokersD  = debounce(()=>window.filterBrokers());
+const filterDevsD     = debounce(()=>window.filterDevs());
+const filterClientsD  = debounce(()=>window.filterClients());
+const filterOPD       = debounce(()=>window.filterOP());
+const filterSED       = debounce(()=>window.filterSE());
+const filterRED       = debounce(()=>window.filterRE());
+const filterCRD       = debounce(()=>window.filterCR());
+const filterAuditD    = debounce(()=>window.filterAuditLog());
+
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function renderDashboard(pc) {
   const {brokers,developers,clients,offplan,secondary,rental} = DATA;
@@ -739,24 +831,24 @@ function renderDashboard(pc) {
   brokers.forEach(b=>{ if(daysUntil(b.reraExpiry)<=60) alerts.push(`⚠️ RERA expiring: ${b.name} (${b.reraExpiry})`); });
   rental.forEach(r=>{ if(daysUntil(r.endDate)<=90&&r.status==="Active") alerts.push(`🔔 Renewal due: ${r.property} (ends ${r.endDate})`); });
 
-  // Commission totals — all deals regardless of status
-  const opComm  = offplan.reduce((s,d)=>s+commOP(d),0);
-  const seComm  = secondary.reduce((s,d)=>s+commSec(d),0);
-  const reComm  = rental.reduce((s,d)=>s+commR(d),0); // excl. VAT
+  // Commission totals — earned deals only (Cancelled excluded)
+  const opComm  = earnedOP(offplan).reduce((s,d)=>s+commOP(d),0);
+  const seComm  = earnedSE(secondary).reduce((s,d)=>s+commSec(d),0);
+  const reComm  = earnedRE(rental).reduce((s,d)=>s+commR(d),0); // excl. VAT
   const totalComm = opComm + seComm + reComm;
 
-  // Purchase amount totals
-  const opAmt = offplan.reduce((s,d)=>s+n(d.price),0);
-  const seAmt = secondary.reduce((s,d)=>s+n(d.price),0);
-  const reAmt = rental.reduce((s,d)=>s+n(d.rent),0);
+  // Purchase amount totals — earned deals only
+  const opAmt = earnedOP(offplan).reduce((s,d)=>s+n(d.price),0);
+  const seAmt = earnedSE(secondary).reduce((s,d)=>s+n(d.price),0);
+  const reAmt = earnedRE(rental).reduce((s,d)=>s+n(d.rent),0);
   const totalAmt = opAmt + seAmt + reAmt;
 
   const stats=[
-    {l:"Total Commission",        v:fmtAED(totalComm), gold:true},
-    {l:"Off Plan Commission",     v:fmtAED(opComm),    gold:true},
-    {l:"Secondary Commission",    v:fmtAED(seComm),    gold:true},
-    {l:"Rental Commission",       v:fmtAED(reComm),    gold:true},
-    {l:"Total Purchase Amount",   v:fmtAED(totalAmt),  gold:true},
+    {l:"Earned Commission",       v:fmtAED(totalComm), gold:true},
+    {l:"Off Plan Earned",         v:fmtAED(opComm),    gold:true},
+    {l:"Secondary Earned",        v:fmtAED(seComm),    gold:true},
+    {l:"Rental Earned",           v:fmtAED(reComm),    gold:true},
+    {l:"Earned Sales Value",      v:fmtAED(totalAmt),  gold:true},
     {l:"Off Plan Sales Value",    v:fmtAED(opAmt),     gold:true},
     {l:"Secondary Sales Value",   v:fmtAED(seAmt),     gold:true},
     {l:"Rental Annual Value",     v:fmtAED(reAmt),     gold:true},
@@ -769,7 +861,8 @@ function renderDashboard(pc) {
     {l:"Active Alerts",   v:alerts.length, gold:alerts.length>0},
   ];
 
-  // Build monthly revenue from Jan–Dec 2026 using real data
+  // Build monthly revenue for the current calendar year
+  const CHART_YEAR = new Date().getFullYear();
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const monthlyOP = new Array(12).fill(0);
   const monthlySE = new Array(12).fill(0);
@@ -779,19 +872,19 @@ function renderDashboard(pc) {
     if (!dateStr) return -1;
     const d = new Date(dateStr);
     if (isNaN(d)) return -1;
-    if (d.getFullYear() !== 2026) return -1;
+    if (d.getFullYear() !== CHART_YEAR) return -1;
     return d.getMonth(); // 0=Jan
   };
 
-  offplan.forEach(d => {
+  earnedOP(offplan).forEach(d => {
     const m = getMonth(d.date);
     if (m >= 0) monthlyOP[m] += commOP(d);
   });
-  secondary.forEach(d => {
+  earnedSE(secondary).forEach(d => {
     const m = getMonth(d.date);
     if (m >= 0) monthlySE[m] += commSec(d);
   });
-  rental.forEach(d => {
+  earnedRE(rental).forEach(d => {
     const m = getMonth(d.dateRented);
     if (m >= 0) monthlyRE[m] += commR(d); // excl. VAT
   });
@@ -804,7 +897,7 @@ function renderDashboard(pc) {
     ${alerts.map(a=>`<div class="alert-bar">${esc(a)}</div>`).join("")}
     <div class="stat-grid">${stats.map(s=>`<div class="stat-card ${s.gold?"gold":"dark"}"><div class="stat-val">${s.v}</div><div class="stat-lbl">${s.l}</div></div>`).join("")}</div>
     <div class="chart-grid">
-      <div class="card"><div style="font-weight:700;margin-bottom:14px">Monthly Commission 2026 (AED)</div><div class="chart-wrap"><canvas id="ch-monthly"></canvas></div></div>
+      <div class="card"><div style="font-weight:700;margin-bottom:14px">Monthly Commission ${CHART_YEAR} (AED)</div><div class="chart-wrap"><canvas id="ch-monthly"></canvas></div></div>
       <div class="card"><div style="font-weight:700;margin-bottom:14px">Deal Distribution</div><div class="chart-wrap"><canvas id="ch-pie"></canvas></div></div>
     </div>
     <div class="card"><div style="font-weight:700;margin-bottom:14px">Broker Performance</div><div style="height:150px"><canvas id="ch-broker"></canvas></div></div>
@@ -839,16 +932,20 @@ function renderDashboard(pc) {
   const pie={labels:["Off Plan","Secondary","Rental"],datasets:[{data:[offplan.length,secondary.length,rental.length],backgroundColor:[GOLD,"#2563EB","#10b981"],borderWidth:2,borderColor:"#fff"}]};
   chartInstances.pie = new Chart("ch-pie",{type:"doughnut",data:pie,options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{font:{size:11}}}}}});
 
-  const bperf=brokers.map(b=>({ name:b.name.split(" ")[0], total: offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commOP(d),0)+secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commSec(d),0)+rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commR(d),0) })).sort((a,b)=>b.total-a.total).filter(b=>b.total>0);
+  const bperf=brokers.map(b=>({ name:b.name.split(" ")[0], total:
+    earnedOP(offplan).filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commOP(d),0)+
+    earnedSE(secondary).filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commSec(d),0)+
+    earnedRE(rental).filter(d=>n(d.brokerId)===n(b.id)).reduce((s,d)=>s+commR(d),0)
+  })).sort((a,b)=>b.total-a.total).filter(b=>b.total>0);
   chartInstances.broker = new Chart("ch-broker",{type:"bar",data:{labels:bperf.map(b=>b.name),datasets:[{label:"Commission",data:bperf.map(b=>b.total),backgroundColor:GOLD,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`AED ${fmt(c.raw)}`}}},scales:{y:{ticks:{callback:v=>v>=1000?`${Math.round(v/1000)}K`:v}}}}});
 
-  // Developer purchase value chart
+  // Developer purchase value chart — earned deals only
   const devAmtMap = {};
-  offplan.forEach(d => {
+  earnedOP(offplan).forEach(d => {
     const name = dName(d.developerId);
     if (name && name !== '—') devAmtMap[name] = (devAmtMap[name]||0) + n(d.price);
   });
-  secondary.forEach(d => {
+  earnedSE(secondary).forEach(d => {
     const name = dName(d.developerId);
     if (name && name !== '—') devAmtMap[name] = (devAmtMap[name]||0) + n(d.price);
   });
@@ -882,13 +979,25 @@ function renderDashboard(pc) {
   });
 }
 
+// ─── EARNED STATUS SETS ───────────────────────────────────────────────────────
+// Only deals in these statuses represent earned/active commission.
+// Cancelled deals are explicitly excluded from all financial totals and charts.
+const OP_EARNED  = new Set(['EOI Paid','Booking Form Signed','First Payment Paid',
+  'Reservation Form Signed','SPA Sent','SPA Signed','Tax Invoice Sent','Commission Received']);
+const SE_EARNED  = new Set(['MOU Signed','Commission Received']);
+const RE_EARNED  = new Set(['Ejari Signed','Commission Received','Active','Renewed']);
+
+const earnedOP  = arr => arr.filter(d => OP_EARNED.has(d.status));
+const earnedSE  = arr => arr.filter(d => SE_EARNED.has(d.status));
+const earnedRE  = arr => arr.filter(d => RE_EARNED.has(d.status));
+
 // ─── BROKERS ──────────────────────────────────────────────────────────────────
 function renderBrokers(pc) {
   const rows = DATA.brokers;
   pc.innerHTML = `
     <div class="page-hdr"><div class="page-title">Brokers <small>(${rows.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('brokers')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openBrokerForm(null)">+ Add Broker</button>`:""}</div></div>
     <div class="card">
-      <div class="search-row"><div class="search-wrap"><span class="icon">🔍</span><input id="q-brokers" placeholder="Search brokers…" oninput="filterBrokers()"/></div></div>
+      <div class="search-row"><div class="search-wrap"><span class="icon">🔍</span><input id="q-brokers" placeholder="Search brokers…" oninput="filterBrokersD()"/></div></div>
       <div class="overflow"><table><thead><tr><th>Name</th><th>Nationality</th><th>Contact</th><th>RERA No.</th><th>RERA Expiry</th><th>Status</th><th>Alert</th><th>Actions</th></tr></thead>
       <tbody id="tbody-brokers">${brokerRows(rows)}</tbody></table></div>
     </div>`;
@@ -928,6 +1037,13 @@ window.openBrokerForm = function(id) {
 window.saveBroker = async function(id) {
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
   const vals=[g("f-name"),g("f-nat"),g("f-contact"),g("f-bemail"),g("f-rera"),g("f-expiry"),g("f-status")];
+  if(!vals[0].trim()){ alert('Broker name is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  // #5 — RERA uniqueness: prevent duplicate RERA numbers (skip blank & skip self)
+  const reraVal = vals[4].trim();
+  if(reraVal){
+    const duplicate = DATA.brokers.find(b=>b.rera && b.rera.trim()===reraVal && n(b.id)!==n(id));
+    if(duplicate){ alert(`RERA number "${reraVal}" is already assigned to broker "${duplicate.name}".`); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  }
   try {
     if(id) {
       await q("UPDATE brokers SET name=?,nationality=?,contact=?,email=?,rera=?,reraExpiry=?,status=? WHERE id=?",[...vals,id]);
@@ -938,6 +1054,7 @@ window.saveBroker = async function(id) {
       await auditLog('CREATE','brokers',newId,`Created broker: ${vals[0]}`);
     }
     await reload("brokers"); closeModal(); renderBrokers(document.getElementById("page-content"));
+    showToast(`✅ Broker "${vals[0]}" saved`);
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
 
@@ -947,7 +1064,7 @@ function renderDevelopers(pc) {
   pc.innerHTML = `
     <div class="page-hdr"><div class="page-title">Developers <small>(${rows.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('developers')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openDevForm(null)">+ Add Developer</button>`:""}</div></div>
     <div class="card">
-      <div class="search-row"><div class="search-wrap"><span class="icon">🔍</span><input id="q-dev" placeholder="Search developers…" oninput="filterDevs()"/></div></div>
+      <div class="search-row"><div class="search-wrap"><span class="icon">🔍</span><input id="q-dev" placeholder="Search developers…" oninput="filterDevsD()"/></div></div>
       <div class="overflow"><table><thead><tr><th>Developer Name</th><th>Agreement Signed</th><th>Agreement Expiry</th><th>Status</th><th>Alert</th><th>Actions</th></tr></thead>
       <tbody id="tbody-devs">${devRows(rows)}</tbody></table></div>
     </div>`;
@@ -981,6 +1098,7 @@ window.openDevForm=function(id){
 window.saveDev=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
   const vals=[g("f-name"),g("f-agree"),g("f-expiry"),g("f-status")];
+  if(!vals[0].trim()){ alert('Developer name is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
   try {
     if(id) {
       await q("UPDATE developers SET name=?,agreement=?,agreementExpiry=?,status=? WHERE id=?",[...vals,id]);
@@ -991,6 +1109,7 @@ window.saveDev=async function(id){
       await auditLog('CREATE','developers',newId,`Created developer: ${vals[0]}`);
     }
     await reload("developers"); closeModal(); renderDevelopers(document.getElementById("page-content"));
+    showToast(`✅ Developer "${vals[0]}" saved`);
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
 
@@ -1001,7 +1120,7 @@ function renderClients(pc){
     <div class="page-hdr"><div class="page-title">Clients <small>(${rows.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('clients')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openClientForm(null)">+ Add Client</button>`:""}</div></div>
     <div class="card">
       <div class="search-row">
-        <div class="search-wrap"><span class="icon">🔍</span><input id="q-cl" placeholder="Search clients…" oninput="filterClients()"/></div>
+        <div class="search-wrap"><span class="icon">🔍</span><input id="q-cl" placeholder="Search clients…" oninput="filterClientsD()"/></div>
         <select id="tf-cl" style="width:160px" onchange="filterClients()"><option>All</option><option>Buyer</option><option>Seller</option><option>Tenant</option><option>Landlord</option></select>
       </div>
       <div class="overflow"><table><thead><tr><th>Name</th><th>Nationality</th><th>Contact</th><th>Email</th><th>Type</th><th>Actions</th></tr></thead>
@@ -1032,6 +1151,8 @@ window.openClientForm=function(id){
 window.saveClient=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
   const vals=[g("f-name"),g("f-nat"),g("f-contact"),g("f-email"),g("f-type")];
+  if(!vals[0].trim()){ alert('Client name is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[2].trim()){ alert('Contact number is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
   try {
     if(id) {
       await q("UPDATE clients SET name=?,nationality=?,contact=?,email=?,type=? WHERE id=?",[...vals,id]);
@@ -1042,6 +1163,7 @@ window.saveClient=async function(id){
       await auditLog('CREATE','clients',newId,`Created client: ${vals[0]}`);
     }
     await reload("clients"); closeModal(); renderClients(document.getElementById("page-content"));
+    showToast(`✅ Client "${vals[0]}" saved`);
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
 
@@ -1052,7 +1174,7 @@ function renderOffplan(pc){
     <div class="page-hdr"><div class="page-title">Off Plan Deals <small>(${raw.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('offplan')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openOPForm(null)">+ Add Deal</button>`:""}</div></div>
     <div class="card">
       <div class="search-row">
-        <div class="search-wrap"><span class="icon">🔍</span><input id="q-op" placeholder="Search project, unit…" oninput="filterOP()"/></div>
+        <div class="search-wrap"><span class="icon">🔍</span><input id="q-op" placeholder="Search project, unit…" oninput="filterOPD()"/></div>
         <select id="sf-op" style="width:200px" onchange="filterOP()"><option>All</option><option>EOI Paid</option><option>Booking Form Signed</option><option>First Payment Paid</option><option>Reservation Form Signed</option><option>SPA Sent</option><option>SPA Signed</option><option>Tax Invoice Sent</option><option>Commission Received</option><option>Cancelled</option></select>
       </div>
       <div class="overflow"><table><thead><tr><th>ID</th><th>Broker</th><th>Client</th><th>Project</th><th>Unit</th><th>Developer</th><th>Price (AED)</th><th>Comm%</th><th>Commission</th><th>Date</th><th>Status</th><th>AML</th><th>KYC</th><th>Comm Release</th><th>Actions</th></tr></thead>
@@ -1060,9 +1182,16 @@ function renderOffplan(pc){
     </div>`;
 }
 // Lookup helpers — guard against null/undefined/falsy ids and return "—" for any miss
-function bName(id){ if(id == null || id === "" || !DATA.brokers?.length)  return "—"; return DATA.brokers.find(b=>n(b.id)===n(id))?.name  || "—"; }
-function cName(id){ if(id == null || id === "" || !DATA.clients?.length)  return "—"; return DATA.clients.find(c=>n(c.id)===n(id))?.name  || "—"; }
-function dName(id){ if(id == null || id === "" || !DATA.developers?.length) return "—"; return DATA.developers.find(d=>n(d.id)===n(id))?.name || "—"; }
+// O(1) lookup maps — rebuilt after every loadAll/reload that touches brokers/clients/developers
+let _BMAP = {}, _CMAP = {}, _DMAP = {};
+function _rebuildMaps(tables) {
+  if (!tables || tables.includes('brokers'))    _BMAP = Object.fromEntries(DATA.brokers.map(b=>[n(b.id), b.name]));
+  if (!tables || tables.includes('clients'))    _CMAP = Object.fromEntries(DATA.clients.map(c=>[n(c.id), c.name]));
+  if (!tables || tables.includes('developers')) _DMAP = Object.fromEntries(DATA.developers.map(d=>[n(d.id), d.name]));
+}
+function bName(id){ return (id == null || id === '') ? '—' : (_BMAP[n(id)] || '—'); }
+function cName(id){ return (id == null || id === '') ? '—' : (_CMAP[n(id)] || '—'); }
+function dName(id){ return (id == null || id === '') ? '—' : (_DMAP[n(id)] || '—'); }
 
 // Returns the commission_release record (if any) linked to a deal
 function getCRForDeal(table, dealId) {
@@ -1132,8 +1261,21 @@ window.openOPForm=function(id){
 window.calcOPComm=function(){ const p=n(document.getElementById("f-price")?.value); const c=n(document.getElementById("f-comm")?.value); const el=document.getElementById("op-comm-preview"); if(el)el.textContent=fmtAED(p*c/100); };
 window.saveOP=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
+  const vals=[g("f-broker"),g("f-client"),g("f-dev"),g("f-status"),g("f-project"),g("f-unit"),n(g("f-price")),n(g("f-comm")),g("f-inv"),g("f-date"),g("f-aml"),g("f-kycs"),g("f-kycr"),g("f-notes")];
+  if(!vals[4].trim()){ alert('Project name is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[0]){ alert('Broker is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[6]){ alert('Price must be greater than 0.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[7]){ alert('Commission % is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  // #4 — Invoice uniqueness: warn if invoice no. already exists in any deal table (skip blank)
+  const invVal = vals[8].trim();
+  if(invVal){
+    const dupOP = DATA.offplan.find(d=>d.invoiceNo && d.invoiceNo.trim()===invVal && n(d.id)!==n(id));
+    const dupSE = DATA.secondary.find(d=>d.invoiceNo && d.invoiceNo.trim()===invVal);
+    const dupRE = DATA.rental.find(d=>d.invoiceNo && d.invoiceNo.trim()===invVal);
+    const dup = dupOP || dupSE || dupRE;
+    if(dup){ if(!confirm(`Invoice number "${invVal}" is already used by another deal. Save anyway?`)){ btn.disabled=false; btn.textContent='💾 Save'; return; } }
+  }
   try {
-    const vals=[g("f-broker"),g("f-client"),g("f-dev"),g("f-status"),g("f-project"),g("f-unit"),n(g("f-price")),n(g("f-comm")),g("f-inv"),g("f-date"),g("f-aml"),g("f-kycs"),g("f-kycr"),g("f-notes")];
     if(id) {
       await q("UPDATE offplan SET brokerId=?,clientId=?,developerId=?,status=?,project=?,unit=?,price=?,commPct=?,invoiceNo=?,date=?,aml=?,kycSent=?,kycReceived=?,notes=? WHERE id=?",[...vals,id]);
       await auditLog('UPDATE','offplan',id,`Updated off plan deal: ${vals[4]} – ${vals[5]} (status: ${vals[3]})`);
@@ -1143,6 +1285,7 @@ window.saveOP=async function(id){
       await auditLog('CREATE','offplan',newId,`Created off plan deal: ${vals[4]} – ${vals[5]} (AED ${n(vals[6]).toLocaleString()})`);
     }
     await reload("offplan"); closeModal(); renderOffplan(document.getElementById("page-content"));
+    showToast(`✅ Off Plan deal "${vals[4]}" saved`);
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
 
@@ -1152,7 +1295,7 @@ function renderSecondary(pc){
   pc.innerHTML=`
     <div class="page-hdr"><div class="page-title">Secondary (Resale) Deals <small>(${raw.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('secondary')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openSEForm(null)">+ Add Deal</button>`:""}</div></div>
     <div class="card">
-      <div class="search-row"><div class="search-wrap"><span class="icon">🔍</span><input id="q-se" placeholder="Search property…" oninput="filterSE()"/></div><select id="sf-se" style="width:200px" onchange="filterSE()"><option>All</option><option>MOU Signed</option><option>Commission Received</option><option>Cancelled</option></select></div>
+      <div class="search-row"><div class="search-wrap"><span class="icon">🔍</span><input id="q-se" placeholder="Search property…" oninput="filterSED()"/></div><select id="sf-se" style="width:200px" onchange="filterSE()"><option>All</option><option>MOU Signed</option><option>Commission Received</option><option>Cancelled</option></select></div>
       <div class="overflow"><table><thead><tr><th>ID</th><th>Broker</th><th>Buyer</th><th>Seller</th><th>Property</th><th>Price (AED)</th><th>Seller Comm</th><th>Buyer Comm</th><th>Discount</th><th>Comm</th><th>Date</th><th>Status</th><th>Comm Release</th><th>Actions</th></tr></thead>
       <tbody id="tbody-se">${seRows(raw)}</tbody></table></div>
     </div>`;
@@ -1211,8 +1354,21 @@ window.openSEForm=function(id){
 window.calcSEComm=function(){ const p=n(gv("f-price")); const s=n(gv("f-sellpct")); const b2=n(gv("f-buypct")); const disc=n(gv("f-disc")); const el=document.getElementById("se-comm-preview"); if(el)el.textContent=fmtAED(p*s/100+p*b2/100-disc); };
 window.saveSE=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
+  const vals=[g("f-broker"),g("f-buyer"),g("f-seller"),null,g("f-status"),g("f-prop"),g("f-propno"),g("f-contract"),n(g("f-price")),n(g("f-sellpct")),n(g("f-buypct")),n(g("f-disc")),g("f-inv"),g("f-date"),g("f-amlb"),g("f-amls"),g("f-kycs"),g("f-kycr")];
+  if(!vals[5].trim()){ alert('Property name is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[0]){ alert('Broker is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[8]){ alert('Price must be greater than 0.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[9] && !vals[10]){ alert('At least one commission % (Seller or Buyer) is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  // #4 — Invoice uniqueness across all deal tables
+  const invVal = vals[12].trim();
+  if(invVal){
+    const dupOP = DATA.offplan.find(d=>d.invoiceNo && d.invoiceNo.trim()===invVal);
+    const dupSE = DATA.secondary.find(d=>d.invoiceNo && d.invoiceNo.trim()===invVal && n(d.id)!==n(id));
+    const dupRE = DATA.rental.find(d=>d.invoiceNo && d.invoiceNo.trim()===invVal);
+    const dup = dupOP || dupSE || dupRE;
+    if(dup){ if(!confirm(`Invoice number "${invVal}" is already used by another deal. Save anyway?`)){ btn.disabled=false; btn.textContent='💾 Save'; return; } }
+  }
   try {
-    const vals=[g("f-broker"),g("f-buyer"),g("f-seller"),1,g("f-status"),g("f-prop"),g("f-propno"),g("f-contract"),n(g("f-price")),n(g("f-sellpct")),n(g("f-buypct")),n(g("f-disc")),g("f-inv"),g("f-date"),g("f-amlb"),g("f-amls"),g("f-kycs"),g("f-kycr")];
     if(id) {
       await q("UPDATE secondary SET brokerId=?,buyerId=?,sellerId=?,developerId=?,status=?,property=?,propNo=?,contract=?,price=?,sellerPct=?,buyerPct=?,discount=?,invoiceNo=?,date=?,amlBuyer=?,amlSeller=?,kycSent=?,kycReceived=? WHERE id=?",[...vals,id]);
       await auditLog('UPDATE','secondary',id,`Updated secondary deal: ${vals[5]} ${vals[6]} (status: ${vals[4]})`);
@@ -1222,6 +1378,7 @@ window.saveSE=async function(id){
       await auditLog('CREATE','secondary',newId,`Created secondary deal: ${vals[5]} ${vals[6]} (AED ${n(vals[8]).toLocaleString()})`);
     }
     await reload("secondary"); closeModal(); renderSecondary(document.getElementById("page-content"));
+    showToast(`✅ Secondary deal "${vals[5]}" saved`);
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
 
@@ -1232,7 +1389,7 @@ function renderRental(pc){
     <div class="page-hdr"><div class="page-title">Rental Deals <small>(${raw.length})</small></div><div style="display:flex;gap:8px;align-items:center"><button class="btn btn-export" onclick="exportCSV('rental')">⬇ Export CSV</button>${canDo("canAdd")?`<button class="btn btn-primary" onclick="openREForm(null)">+ Add Deal</button>`:""}</div></div>
     <div class="card">
       <div class="search-row">
-        <div class="search-wrap"><span class="icon">🔍</span><input id="q-re" placeholder="Search property…" oninput="filterRE()"/></div>
+        <div class="search-wrap"><span class="icon">🔍</span><input id="q-re" placeholder="Search property…" oninput="filterRED()"/></div>
         <select id="sf-re" style="width:200px" onchange="filterRE()"><option>All</option><option>Ejari Signed</option><option>Commission Received</option><option>Renewed</option><option>Cancelled</option></select>
       </div>
       <div class="overflow"><table><thead><tr><th>ID</th><th>Broker</th><th>Client</th><th>Property</th><th>Type</th><th>Rent</th><th>Comm%</th><th>Comm</th><th>VAT 5%</th><th>Total w/VAT</th><th>End Date</th><th>Renewal</th><th>Status</th><th>Comm Release</th><th>Actions</th></tr></thead>
@@ -1290,8 +1447,21 @@ window.openREForm=function(id){
 window.calcREComm=function(){ const r=n(gv("f-rent")); const c=n(gv("f-comm")); const comm=r*c/100; const vat=comm*0.05; const el=document.getElementById("re-comm-preview"); const ev=document.getElementById("re-vat-preview"); const et=document.getElementById("re-total-preview"); if(el)el.textContent=fmtAED(comm); if(ev)ev.textContent=fmtAED(vat); if(et)et.textContent=fmtAED(comm+vat); };
 window.saveRE=async function(id){
   const btn=document.getElementById("save-btn"); btn.disabled=true; btn.textContent="Saving…";
+  const vals=[g("f-broker"),g("f-client"),g("f-status"),g("f-prop"),g("f-propno"),g("f-ctype"),n(g("f-rent")),n(g("f-comm")),g("f-inv"),g("f-dater"),g("f-start"),g("f-end"),g("f-pf"),g("f-notes")];
+  if(!vals[3].trim()){ alert('Property name is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[0]){ alert('Broker is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[6]){ alert('Annual rent must be greater than 0.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  if(!vals[7]){ alert('Commission % is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+  // #4 — Invoice uniqueness across all deal tables
+  const invVal = vals[8].trim();
+  if(invVal){
+    const dupOP = DATA.offplan.find(d=>d.invoiceNo && d.invoiceNo.trim()===invVal);
+    const dupSE = DATA.secondary.find(d=>d.invoiceNo && d.invoiceNo.trim()===invVal);
+    const dupRE = DATA.rental.find(d=>d.invoiceNo && d.invoiceNo.trim()===invVal && n(d.id)!==n(id));
+    const dup = dupOP || dupSE || dupRE;
+    if(dup){ if(!confirm(`Invoice number "${invVal}" is already used by another deal. Save anyway?`)){ btn.disabled=false; btn.textContent='💾 Save'; return; } }
+  }
   try {
-    const vals=[g("f-broker"),g("f-client"),g("f-status"),g("f-prop"),g("f-propno"),g("f-ctype"),n(g("f-rent")),n(g("f-comm")),g("f-inv"),g("f-dater"),g("f-start"),g("f-end"),g("f-pf"),g("f-notes")];
     if(id) {
       await q("UPDATE rental SET brokerId=?,clientId=?,status=?,property=?,propNo=?,contractType=?,rent=?,commPct=?,invoiceNo=?,dateRented=?,startDate=?,endDate=?,pfExpert=?,notes=? WHERE id=?",[...vals,id]);
       await auditLog('UPDATE','rental',id,`Updated rental: ${vals[3]} ${vals[4]} (status: ${vals[2]})`);
@@ -1301,6 +1471,7 @@ window.saveRE=async function(id){
       await auditLog('CREATE','rental',newId,`Created rental: ${vals[3]} ${vals[4]} (AED ${n(vals[6]).toLocaleString()} ${vals[5]})`);
     }
     await reload("rental"); closeModal(); renderRental(document.getElementById("page-content"));
+    showToast(`✅ Rental "${vals[3]}" saved`);
   } catch(e){ alert("Error: "+e.message); } finally{ btn.disabled=false; }
 };
 
@@ -1308,26 +1479,45 @@ window.saveRE=async function(id){
 function renderReports(pc){
   const list = (CU.brokerId) ? DATA.brokers.filter(b=>n(b.id)===CU.brokerId) : DATA.brokers;
 
+  // #10 — Date range filter: read from persistent filter state or default to blank (all time)
+  const dateFrom = window._rptDateFrom || '';
+  const dateTo   = window._rptDateTo   || '';
+  const brokerFilter = window._rptBroker || '';
+
+  // Helper: filter a deal array by date field and date range
+  const inRange = (dateStr) => {
+    if(!dateStr) return true; // deals with no date pass through
+    if(dateFrom && dateStr < dateFrom) return false;
+    if(dateTo   && dateStr > dateTo)   return false;
+    return true;
+  };
+
+  // Apply date filter to each deal type (date field differs per table)
+  const opFiltered = DATA.offplan.filter(d=>inRange(d.date));
+  const seFiltered = DATA.secondary.filter(d=>inRange(d.date));
+  const reFiltered = DATA.rental.filter(d=>inRange(d.dateRented));
+
   const active = list.filter(b =>
-    DATA.offplan.some(d=>n(d.brokerId)===n(b.id)) ||
-    DATA.secondary.some(d=>n(d.brokerId)===n(b.id)) ||
-    DATA.rental.some(d=>n(d.brokerId)===n(b.id))
+    (brokerFilter ? n(b.id)===n(brokerFilter) : true) &&
+    (opFiltered.some(d=>n(d.brokerId)===n(b.id)) ||
+     seFiltered.some(d=>n(d.brokerId)===n(b.id)) ||
+     reFiltered.some(d=>n(d.brokerId)===n(b.id)))
   );
 
-  const grandOpC  = active.reduce((s,b)=>s+DATA.offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commOP(d),0),0);
-  const grandSeC  = active.reduce((s,b)=>s+DATA.secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commSec(d),0),0);
-  const grandReC  = active.reduce((s,b)=>s+DATA.rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commR(d),0),0);
-  const grandOpAmt= active.reduce((s,b)=>s+DATA.offplan.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.price),0),0);
-  const grandSeAmt= active.reduce((s,b)=>s+DATA.secondary.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.price),0),0);
-  const grandReAmt= active.reduce((s,b)=>s+DATA.rental.filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.rent),0),0);
+  const grandOpC  = active.reduce((s,b)=>s+earnedOP(opFiltered).filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commOP(d),0),0);
+  const grandSeC  = active.reduce((s,b)=>s+earnedSE(seFiltered).filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commSec(d),0),0);
+  const grandReC  = active.reduce((s,b)=>s+earnedRE(reFiltered).filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+commR(d),0),0);
+  const grandOpAmt= active.reduce((s,b)=>s+earnedOP(opFiltered).filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.price),0),0);
+  const grandSeAmt= active.reduce((s,b)=>s+earnedSE(seFiltered).filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.price),0),0);
+  const grandReAmt= active.reduce((s,b)=>s+earnedRE(reFiltered).filter(d=>n(d.brokerId)===n(b.id)).reduce((x,d)=>x+n(d.rent),0),0);
 
   const summaryHtml = canDo("canAdd") ? `
     <div class="card" style="margin-bottom:24px;background:linear-gradient(135deg,#0A1628,#0D2147);color:#fff">
       <div style="font-size:1.1rem;font-weight:800;color:#C9A84C;margin-bottom:16px">📊 Overall Performance Summary</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">
         ${[
-          ["Total Commission",     fmtAED(grandOpC+grandSeC+grandReC)],
-          ["Off Plan Commission",  fmtAED(grandOpC)],
+          ["Total Earned Commission", fmtAED(grandOpC+grandSeC+grandReC)],
+          ["Off Plan Earned",      fmtAED(grandOpC)],
           ["Secondary Commission", fmtAED(grandSeC)],
           ["Rental Commission",    fmtAED(grandReC)],
           ["Off Plan Sales Value", fmtAED(grandOpAmt)],
@@ -1339,15 +1529,18 @@ function renderReports(pc){
     </div>` : "";
 
   const brokersHtml = active.map(b=>{
-    const opD = DATA.offplan.filter(d=>n(d.brokerId)===n(b.id));
-    const seD = DATA.secondary.filter(d=>n(d.brokerId)===n(b.id));
-    const reD = DATA.rental.filter(d=>n(d.brokerId)===n(b.id));
-    const opC = opD.reduce((s,d)=>s+commOP(d),0);
-    const seC = seD.reduce((s,d)=>s+commSec(d),0);
-    const reC = reD.reduce((s,d)=>s+commR(d),0); // excl. VAT
-    const opAmt = opD.reduce((s,d)=>s+n(d.price),0);
-    const seAmt = seD.reduce((s,d)=>s+n(d.price),0);
-    const reAmt = reD.reduce((s,d)=>s+n(d.rent),0);
+    const opD = opFiltered.filter(d=>n(d.brokerId)===n(b.id));   // all deals — for table rows
+    const seD = seFiltered.filter(d=>n(d.brokerId)===n(b.id));
+    const reD = reFiltered.filter(d=>n(d.brokerId)===n(b.id));
+    const opDe = earnedOP(opD); // earned subset — for financial totals only
+    const seDe = earnedSE(seD);
+    const reDe = earnedRE(reD);
+    const opC = opDe.reduce((s,d)=>s+commOP(d),0);
+    const seC = seDe.reduce((s,d)=>s+commSec(d),0);
+    const reC = reDe.reduce((s,d)=>s+commR(d),0); // excl. VAT
+    const opAmt = opDe.reduce((s,d)=>s+n(d.price),0);
+    const seAmt = seDe.reduce((s,d)=>s+n(d.price),0);
+    const reAmt = reDe.reduce((s,d)=>s+n(d.rent),0);
     const totalC = opC+seC+reC;
     const totalAmt = opAmt+seAmt+reAmt;
     const reraAlert = daysUntil(b.reraExpiry)<=60
@@ -1419,17 +1612,61 @@ function renderReports(pc){
     </div>`;
   }).join("");
 
+  const brokerOpts = DATA.brokers.map(b=>`<option value="${b.id}" ${brokerFilter && n(b.id)===n(brokerFilter)?'selected':''}>${esc(b.name)}</option>`).join('');
+  const rangeLabel = dateFrom||dateTo ? `<span style="background:#dbeafe;color:#1d4ed8;font-size:.75rem;font-weight:700;padding:3px 10px;border-radius:20px;margin-left:10px">Filtered</span>` : '';
+
   pc.innerHTML = `
-    <div class="page-hdr"><div class="page-title">Broker Performance Reports</div></div>
+    <div class="page-hdr"><div class="page-title">Broker Performance Reports${rangeLabel}</div></div>
+
+    <!-- #10 Date range filter bar -->
+    <div class="card" style="margin-bottom:18px;padding:14px 18px">
+      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+        <div class="field" style="margin:0;flex:0 0 auto">
+          <label style="font-size:.75rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">From Date</label>
+          <input type="date" id="rpt-from" value="${esc(dateFrom)}" style="width:150px"/>
+        </div>
+        <div class="field" style="margin:0;flex:0 0 auto">
+          <label style="font-size:.75rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">To Date</label>
+          <input type="date" id="rpt-to" value="${esc(dateTo)}" style="width:150px"/>
+        </div>
+        ${!CU.brokerId ? `<div class="field" style="margin:0;flex:0 0 auto">
+          <label style="font-size:.75rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Broker</label>
+          <select id="rpt-broker" style="width:180px"><option value="">All Brokers</option>${brokerOpts}</select>
+        </div>` : ''}
+        <button class="btn btn-primary" style="padding:8px 18px;font-size:.83rem" onclick="applyReportFilters()">🔍 Apply</button>
+        <button class="btn btn-secondary" style="padding:8px 14px;font-size:.83rem" onclick="clearReportFilters()">✕ Clear</button>
+      </div>
+    </div>
+
     ${summaryHtml}
     ${brokersHtml}
-    ${active.length===0 ? '<div class="card" style="text-align:center;color:#94a3b8;padding:40px">No deals found.</div>' : ''}
+    ${active.length===0 ? '<div class="card" style="text-align:center;color:#94a3b8;padding:40px">No deals found for the selected period.</div>' : ''}
   `;
 }
 
 // ─── SETTINGS ─────────────────────────────────────────────────────────────────
 
+// #10 — Report date range filter handlers
+window.applyReportFilters = function(){
+  window._rptDateFrom = document.getElementById('rpt-from')?.value || '';
+  window._rptDateTo   = document.getElementById('rpt-to')?.value   || '';
+  window._rptBroker   = document.getElementById('rpt-broker')?.value || '';
+  renderReports(document.getElementById('page-content'));
+};
+window.clearReportFilters = function(){
+  window._rptDateFrom = ''; window._rptDateTo = ''; window._rptBroker = '';
+  renderReports(document.getElementById('page-content'));
+};
+
 // ─── COMMISSION RELEASE ───────────────────────────────────────────────────────
+// Live commission from source deal — used by CR table, stat cards, CSV export, receipt
+function crLiveComm(r) {
+  const src = r.dealTable==='offplan'?DATA.offplan:r.dealTable==='secondary'?DATA.secondary:DATA.rental;
+  const d = src?.find(x=>n(x.id)===n(r.dealId));
+  if (!d) return n(r.totalCommission);
+  return r.dealTable==='offplan' ? commOP(d) : r.dealTable==='secondary' ? commSec(d) : commR(d);
+}
+
 function renderCommissionRelease(pc){
   const rows = DATA.commission_release;
 
@@ -1440,17 +1677,12 @@ function renderCommissionRelease(pc){
     ...DATA.rental.map(d=>({ table:'rental', id:d.id, label:`[RE] ${d.property} ${d.propNo} (${bName(d.brokerId)})`, brokerId:d.brokerId, project:`${d.property} ${d.propNo}`, comm:commR(d) })),
   ];
 
-  // Always derive commission live from source deal; fall back to stored value if deal is orphaned
-  function crLiveComm(r) {
-    const src = r.dealTable==='offplan'?DATA.offplan:r.dealTable==='secondary'?DATA.secondary:DATA.rental;
-    const d = src?.find(x=>n(x.id)===n(r.dealId));
-    if (!d) return n(r.totalCommission);
-    return r.dealTable==='offplan' ? commOP(d) : r.dealTable==='secondary' ? commSec(d) : commR(d);
-  }
+  // crLiveComm is now a module-level function (defined above renderCommissionRelease)
   const totalComm      = rows.reduce((s,r)=>s+crLiveComm(r),0);
   const totalVAT       = totalComm * 0.05;
   const totalBShare    = rows.reduce((s,r)=>s+(crLiveComm(r)*n(r.brokerPct||50)/100),0);
   const totalCShare    = rows.reduce((s,r)=>s+(crLiveComm(r)*n(r.companyPct||50)/100),0);
+  // amountReceived = amount paid to broker (compared against bShare, not totalComm)
   const totalRec       = rows.reduce((s,r)=>s+n(r.amountReceived),0);
   const paidRows       = rows.filter(r=>r.status==='Paid');
   const pendRows       = rows.filter(r=>r.status==='Pending');
@@ -1458,7 +1690,8 @@ function renderCommissionRelease(pc){
   const bSharePend     = pendRows.reduce((s,r)=>s+(crLiveComm(r)*n(r.brokerPct||50)/100),0);
   const cShareRec      = paidRows.reduce((s,r)=>s+(crLiveComm(r)*n(r.companyPct||50)/100),0);
   const cSharePend     = pendRows.reduce((s,r)=>s+(crLiveComm(r)*n(r.companyPct||50)/100),0);
-  const totalPend      = pendRows.reduce((s,r)=>s+crLiveComm(r)-n(r.amountReceived),0);
+  // Pending balance = broker's share still outstanding across all pending CRs
+  const totalPend      = pendRows.reduce((s,r)=>s+Math.max(0,(crLiveComm(r)*n(r.brokerPct||50)/100)-n(r.amountReceived)),0);
 
   pc.innerHTML = `
     <div class="page-hdr">
@@ -1468,30 +1701,30 @@ function renderCommissionRelease(pc){
     <div class="stat-grid" style="margin-bottom:10px">
       <div class="stat-card gold"><div class="stat-val">${fmtAED(totalComm)}</div><div class="stat-lbl">Total Commission</div></div>
       <div class="stat-card gold"><div class="stat-val">${fmtAED(totalVAT)}</div><div class="stat-lbl">Est. VAT (5%)</div></div>
-      <div class="stat-card dark"><div class="stat-val">${fmtAED(totalRec)}</div><div class="stat-lbl">Total Received</div></div>
-      <div class="stat-card dark"><div class="stat-val">${fmtAED(totalPend)}</div><div class="stat-lbl">Pending Balance</div></div>
+      <div class="stat-card dark"><div class="stat-val">${fmtAED2(totalRec)}</div><div class="stat-lbl">Total Broker Paid</div></div>
+      <div class="stat-card dark"><div class="stat-val">${fmtAED2(totalPend)}</div><div class="stat-lbl">Broker Balance Due</div></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px">
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:14px 18px">
         <div style="font-size:.72rem;font-weight:800;color:#1d4ed8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;border-bottom:1px solid #bfdbfe;padding-bottom:6px">👤 Broker Share</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
           <div><div class="audit-lbl">Total</div><div style="font-weight:800;color:#1d4ed8;font-size:.9rem">${fmtAED(totalBShare)}</div></div>
-          <div><div class="audit-lbl">Received (Paid)</div><div style="font-weight:800;color:#16a34a;font-size:.9rem">${fmtAED(bShareRec)}</div></div>
-          <div><div class="audit-lbl">Pending</div><div style="font-weight:800;color:#dc2626;font-size:.9rem">${fmtAED(bSharePend)}</div></div>
+          <div><div class="audit-lbl">Received (Paid)</div><div style="font-weight:800;color:#16a34a;font-size:.9rem">${fmtAED2(bShareRec)}</div></div>
+          <div><div class="audit-lbl">Pending</div><div style="font-weight:800;color:#dc2626;font-size:.9rem">${fmtAED2(bSharePend)}</div></div>
         </div>
       </div>
       <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:14px 18px">
         <div style="font-size:.72rem;font-weight:800;color:#15803d;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;border-bottom:1px solid #bbf7d0;padding-bottom:6px">🏢 Company Share</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
           <div><div class="audit-lbl">Total</div><div style="font-weight:800;color:#15803d;font-size:.9rem">${fmtAED(totalCShare)}</div></div>
-          <div><div class="audit-lbl">Received (Paid)</div><div style="font-weight:800;color:#16a34a;font-size:.9rem">${fmtAED(cShareRec)}</div></div>
-          <div><div class="audit-lbl">Pending</div><div style="font-weight:800;color:#dc2626;font-size:.9rem">${fmtAED(cSharePend)}</div></div>
+          <div><div class="audit-lbl">Received (Paid)</div><div style="font-weight:800;color:#16a34a;font-size:.9rem">${fmtAED2(cShareRec)}</div></div>
+          <div><div class="audit-lbl">Pending</div><div style="font-weight:800;color:#dc2626;font-size:.9rem">${fmtAED2(cSharePend)}</div></div>
         </div>
       </div>
     </div>
     <div class="card">
       <div class="search-row">
-        <div class="search-wrap"><span class="icon">🔍</span><input id="q-cr" placeholder="Search broker or project…" oninput="filterCR()"/></div>
+        <div class="search-wrap"><span class="icon">🔍</span><input id="q-cr" placeholder="Search broker or project…" oninput="filterCRD()"/></div>
         <select id="sf-cr" style="width:160px" onchange="filterCR()"><option>All</option><option>Pending</option><option>Paid</option></select>
       </div>
       <div class="overflow"><table>
@@ -1501,8 +1734,8 @@ function renderCommissionRelease(pc){
           <th style="text-align:right">Est. VAT (5%)</th>
           <th style="text-align:right">Broker Share</th>
           <th style="text-align:right">Company Share</th>
-          <th style="text-align:right">Amount Received</th>
-          <th style="text-align:right">Balance</th>
+          <th style="text-align:right">Broker Paid</th>
+          <th style="text-align:right">Balance Due</th>
           <th>Date</th><th>Status</th><th>Notes</th><th>Actions</th>
         </tr></thead>
         <tbody id="tbody-cr">${crRows(rows)}</tbody>
@@ -1529,7 +1762,8 @@ function crRows(rows){
     const cPct   = n(r.companyPct||50);
     const bShare = comm * bPct / 100;
     const cShare = comm * cPct / 100;
-    const balance = comm - n(r.amountReceived);
+    // balance = broker share still outstanding (amountReceived is what was paid to broker)
+    const balance = Math.max(0, bShare - n(r.amountReceived));
     ftComm+=comm; ftVAT+=vat; ftBShare+=bShare; ftCShare+=cShare; ftRec+=n(r.amountReceived); ftBal+=balance;
     const linkBadge = liveDeal
       ? `<span style="font-size:.68rem;background:#dcfce7;color:#16a34a;border:1px solid #86efac;padding:2px 7px;border-radius:20px;font-weight:700" title="Linked to ${r.dealTable} #${r.dealId}">✓ Linked</span>`
@@ -1545,8 +1779,8 @@ function crRows(rows){
       <td style="text-align:right;color:#b45309;font-size:.82rem">${fmtAED(vat)}</td>
       <td style="text-align:right;color:#1d4ed8;font-weight:700">${fmtAED(bShare)} <span style="font-size:.7rem;opacity:.7">(${bPct}%)</span></td>
       <td style="text-align:right;color:#15803d;font-weight:700">${fmtAED(cShare)} <span style="font-size:.7rem;opacity:.7">(${cPct}%)</span></td>
-      <td style="text-align:right;color:#16a34a;font-weight:700">${fmtAED(r.amountReceived)}</td>
-      <td style="text-align:right;color:${balance>0?'#dc2626':'#16a34a'};font-weight:700">${fmtAED(balance)}</td>
+      <td style="text-align:right;color:#16a34a;font-weight:700">${fmtAED2(r.amountReceived)}</td>
+      <td style="text-align:right;color:${balance>0?'#dc2626':'#16a34a'};font-weight:700">${fmtAED2(balance)}</td>
       <td>${esc(r.releaseDate)}</td>
       <td>${badge(r.status)}</td>
       <td style="font-size:.78rem;color:#64748b;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.notes||'')}</td>
@@ -1564,8 +1798,8 @@ function crRows(rows){
     <td style="text-align:right;color:#b45309">${fmtAED(ftVAT)}</td>
     <td style="text-align:right;color:#1d4ed8">${fmtAED(ftBShare)}</td>
     <td style="text-align:right;color:#15803d">${fmtAED(ftCShare)}</td>
-    <td style="text-align:right;color:#16a34a">${fmtAED(ftRec)}</td>
-    <td style="text-align:right;color:${ftBal>0?'#dc2626':'#16a34a'}">${fmtAED(ftBal)}</td>
+    <td style="text-align:right;color:#16a34a">${fmtAED2(ftRec)}</td>
+    <td style="text-align:right;color:${ftBal>0?'#dc2626':'#16a34a'}">${fmtAED2(ftBal)}</td>
     <td colspan="4"></td>
   </tr>`;
 
@@ -1691,7 +1925,7 @@ window.openCRForm = function(id, preFillTable, preFillDealId){
     <div class="g2">
       <div class="field"><label>Broker</label><input id="f-crbroker" readonly style="background:#f1f5f9;font-weight:700" value="${esc(initDeal?bName(initDeal.brokerId):r?bName(r.brokerId):'')}" /></div>
       <div class="field"><label>Commission (AED) <span style="font-size:.72rem;color:#16a34a">auto-calculated</span></label><input id="f-totcomm" type="number" readonly style="background:#f1f5f9;color:var(--gold);font-weight:800" value="${initComm.toFixed(2)}"/></div>
-      <div class="field"><label>Amount Received (AED)</label><input id="f-amtrec" type="number" step="0.01" value="${r?n(r.amountReceived).toFixed(2):'0'}"/></div>
+      <div class="field"><label>Amount Paid to Broker (AED)</label><input id="f-amtrec" type="number" step="0.01" value="${r?n(r.amountReceived).toFixed(2):'0'}"/></div>
       <div class="field"><label>Release Date</label><input type="date" id="f-reldate" value="${esc(r?.releaseDate||'')}"/></div>
       <div class="field"><label>Status</label>
         <select id="f-crstatus">
@@ -1699,7 +1933,14 @@ window.openCRForm = function(id, preFillTable, preFillDealId){
           <option ${r?.status==='Paid'?'selected':''}>Paid</option>
         </select>
       </div>
-      <div class="field" style="grid-column:1/-1"><label>Notes</label><textarea id="f-crnotes" style="height:54px;resize:vertical">${esc(r?.notes||'')}</textarea></div>
+      <div class="field" style="grid-column:1/-1">
+        <label style="display:flex;align-items:center;gap:10px">
+          Payment Log / Notes
+          <button type="button" class="btn btn-secondary" style="font-size:.72rem;padding:3px 10px;font-weight:600" onclick="appendPaymentLog()">+ Log Payment Entry</button>
+        </label>
+        <textarea id="f-crnotes" style="height:80px;resize:vertical;font-family:monospace;font-size:.8rem">${esc(r?.notes||'')}</textarea>
+        <div style="font-size:.72rem;color:#94a3b8;margin-top:3px">Use "Log Payment Entry" to prepend a timestamped tranche record, or type free-form notes.</div>
+      </div>
     </div>
 
     <div style="margin:14px 0 6px;font-weight:700;font-size:.85rem;color:var(--navy);border-bottom:2px solid var(--navy);padding-bottom:6px">💰 Commission Split</div>
@@ -1725,7 +1966,7 @@ window.openCRForm = function(id, preFillTable, preFillDealId){
     </div>
     <div id="cr-split-warning" style="display:none;background:#fee2e2;color:#dc2626;border-radius:7px;padding:7px 12px;font-size:.8rem;margin-bottom:6px">⚠️ Broker % + Company % must equal 100%</div>
 
-    <div class="comm-box" style="margin-top:10px">Balance Remaining: <span id="cr-balance-preview">${fmtAED(initComm-n(r?.amountReceived||0))}</span></div>
+    <div class="comm-box" style="margin-top:10px">Broker Balance Remaining: <span id="cr-balance-preview">${fmtAED2(Math.max(0, initComm*brokerPct/100 - n(r?.amountReceived||0)))}</span></div>
     <div class="save-bar">
       ${id && canDo('canDelete') ? `<button class="btn btn-delete" onclick="deleteRecord('commission_release',${id},'commission release')" style="margin-right:auto">🗑️ Delete</button>` : ''}
       <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -1757,13 +1998,28 @@ window.onCRDealChange = function(){
 };
 
 window.updateCRBalance = function(){
-  const comm = n(document.getElementById('f-totcomm')?.value);
-  const rec  = n(document.getElementById('f-amtrec')?.value);
-  const el   = document.getElementById('cr-balance-preview');
-  if(el) el.textContent = fmtAED(comm - rec);
+  const comm       = n(document.getElementById('f-totcomm')?.value);
+  const brokerPct  = n(document.getElementById('f-brokerpct')?.value || 50);
+  const bShare     = comm * brokerPct / 100;
+  const rec        = n(document.getElementById('f-amtrec')?.value);
+  const el         = document.getElementById('cr-balance-preview');
+  // Balance = broker share remaining after payment (what we still owe the broker)
+  if(el) el.textContent = fmtAED2(Math.max(0, bShare - rec));
   updateSplitPreview();
 };
 
+// #8 — Lightweight payment tranche log: prepend a timestamped entry to the notes textarea
+window.appendPaymentLog = function(){
+  const amtEl = document.getElementById('f-amtrec');
+  const notesEl = document.getElementById('f-crnotes');
+  if(!amtEl || !notesEl) return;
+  const amt = n(amtEl.value);
+  if(!amt){ showToast('Enter an amount in "Amount Paid to Broker" first.','#b45309'); return; }
+  const now = new Date().toLocaleDateString('en-AE',{year:'numeric',month:'2-digit',day:'2-digit'});
+  const entry = `[${now}] Payment: ${fmtAED2(amt)}`;
+  notesEl.value = entry + (notesEl.value ? '\n' + notesEl.value : '');
+  notesEl.focus();
+};
 window.onSplitChange = function(changed){
   const bEl = document.getElementById('f-brokerpct');
   const cEl = document.getElementById('f-companypct');
@@ -1808,8 +2064,10 @@ window.saveCR = async function(id){
   try {
     const sel = document.getElementById('f-deal')?.value||'';
     const [dealTable, dealId, brokerId] = sel.split('|');
+    if(!dealTable || !dealId){ alert('Please select a deal.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
     const dealIdNum = n(dealId);
     const brokerIdNum = n(brokerId);
+    if(!brokerIdNum){ alert('No broker linked to the selected deal.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
     const totalComm   = n(g('f-totcomm'));
     const amtRec      = n(g('f-amtrec'));
     const relDate     = g('f-reldate');
@@ -1817,6 +2075,14 @@ window.saveCR = async function(id){
     const notes       = g('f-crnotes');
     const brokerPct   = n(g('f-brokerpct'));
     const companyPct  = n(g('f-companypct'));
+    if(!relDate){ alert('Release date is required.'); btn.disabled=false; btn.textContent='💾 Save'; return; }
+    const bShare = totalComm * brokerPct / 100;
+    if(amtRec > bShare + 0.01) showToast(`⚠️ Amount received (${fmtAED(amtRec)}) exceeds broker share (${fmtAED(bShare)})`, '#b45309');
+    // #7 — Paid status validation: cannot mark Paid if broker hasn't been fully paid
+    if(status === 'Paid' && amtRec < bShare - 0.01){
+      const shortfall = bShare - amtRec;
+      if(!confirm(`Status is "Paid" but broker balance still has ${fmtAED(shortfall)} outstanding. Mark as Paid anyway?`)){ btn.disabled=false; btn.textContent='💾 Save'; return; }
+    }
     if (Math.abs(brokerPct + companyPct - 100) > 0.01) {
       const warn = document.getElementById('cr-split-warning');
       if (warn) { warn.style.display='block'; warn.scrollIntoView({behavior:'smooth',block:'nearest'}); }
@@ -1847,9 +2113,24 @@ window.saveCR = async function(id){
       const rows=await q("SELECT last_insert_rowid() as lid"); const newId=rows[0]?.lid||null;
       await auditLog('CREATE','commission_release',newId,`Created commission release: ${projectName} – AED ${totalComm.toLocaleString()}`);
     }
-    await reload('commission_release');
+    // Reload CR table AND all deal tables — their rows show live CR-status badges
+    await Promise.all([
+      reload('commission_release'),
+      reload('offplan'),
+      reload('secondary'),
+      reload('rental'),
+    ]);
     closeModal();
-    renderCommissionRelease(document.getElementById('page-content'));
+    // Re-render whichever page is currently visible
+    const pc = document.getElementById('page-content');
+    const pageRenderers = {
+      commission_release: renderCommissionRelease,
+      offplan:  renderOffplan,
+      secondary: renderSecondary,
+      rental:   renderRental,
+    };
+    (pageRenderers[currentPage] || renderCommissionRelease)(pc);
+    showToast('✅ Commission release saved');
   } catch(e){ alert('Error: '+e.message); }
   finally{ btn.disabled=false; }
 };
@@ -2033,17 +2314,13 @@ window.doResetPw = async function(idx) {
   if(np.length < 6){ errEl.textContent='Password must be at least 6 characters.'; errEl.style.display='block'; return; }
   if(np!==cp){ errEl.textContent='Passwords do not match.'; errEl.style.display='block'; return; }
   try {
-    await q('UPDATE users SET password=? WHERE id=?', [np, USERS[idx].id]);
-    USERS[idx].password = np;
+    const hashed = await hashPassword(np);
+    await q('UPDATE users SET password=? WHERE id=?', [hashed, USERS[idx].id]);
+    USERS[idx].password = hashed;
     await auditLog('UPDATE','users',USERS[idx].id,`Reset password for user: ${USERS[idx].name} (@${USERS[idx].username})`);
   } catch(e) { errEl.textContent='Error saving password: '+e.message; errEl.style.display='block'; return; }
   closeModal();
-  // Toast feedback
-  const toast = document.createElement('div');
-  toast.style.cssText='position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#16a34a;color:#fff;padding:10px 22px;border-radius:10px;font-size:.85rem;font-weight:600;z-index:9999;box-shadow:0 4px 16px #0002';
-  toast.textContent=`✅ Password for ${USERS[idx].name} has been reset.`;
-  document.body.appendChild(toast);
-  setTimeout(()=>toast.remove(),3000);
+  showToast(`✅ Password for ${USERS[idx].name} has been reset.`);
 };
 
 
@@ -2057,12 +2334,14 @@ window.doChangeAdminPw = async function() {
   okEl.style.display  = 'none';
   const adminIdx = USERS.findIndex(u => u.username === CU.username);
   if(adminIdx === -1) return;
-  if(cur !== USERS[adminIdx].password){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
+  const curValid = await verifyPassword(cur, USERS[adminIdx].password);
+  if(!curValid){ errEl.textContent='Current password is incorrect.'; errEl.style.display='block'; return; }
   if(np.length < 6){ errEl.textContent='New password must be at least 6 characters.'; errEl.style.display='block'; return; }
   if(np !== cp){ errEl.textContent='New passwords do not match.'; errEl.style.display='block'; return; }
   try {
-    await q('UPDATE users SET password=? WHERE id=?', [np, USERS[adminIdx].id]);
-    USERS[adminIdx].password = np;
+    const hashed = await hashPassword(np);
+    await q('UPDATE users SET password=? WHERE id=?', [hashed, USERS[adminIdx].id]);
+    USERS[adminIdx].password = hashed;
     CU = USERS[adminIdx];
     await auditLog('UPDATE','users',USERS[adminIdx].id,`Changed own password (@${USERS[adminIdx].username})`);
   } catch(e) { errEl.textContent='Error saving password: '+e.message; errEl.style.display='block'; return; }
@@ -2118,7 +2397,8 @@ window.saveNewUser = async function() {
     ? JSON.stringify({ tables:{dashboard:true,brokers:true,developers:true,clients:true,offplan:true,secondary:true,rental:true,reports:true,commission_release:true}, canAdd:true,canEdit:true,canDelete:true,canResetPw:true })
     : JSON.stringify(JSON.parse(JSON.stringify(DEFAULT_PERMS)));
   try {
-    await q('INSERT INTO users (username,password,role,name,brokerId,perms) VALUES (?,?,?,?,null,?)', [username,pass,role,name,perms]);
+    const hashedPass = await hashPassword(pass);
+    await q('INSERT INTO users (username,password,role,name,brokerId,perms) VALUES (?,?,?,?,null,?)', [username,hashedPass,role,name,perms]);
     await auditLog('CREATE','users',null,`Created user: ${name} (@${username}, role: ${role})`);
     // Reload users list
     const rows = await q('SELECT * FROM users ORDER BY id');
@@ -2424,7 +2704,7 @@ window.refreshData = async function() {
 
 // ─── UTILS ────────────────────────────────────────────────────────────────────
 const g   = id => document.getElementById(id)?.value ?? "";
-const gv  = id => document.getElementById(id)?.value ?? "";
+const gv  = g; // alias — same function
 function viewGrid(items){ return `<div class="view-grid">${items.map(([k,v])=>`<div class="view-cell"><div class="vk">${esc(k)}</div><div class="vv">${v == null || v === "" ? "—" : esc(String(v))}</div></div>`).join("")}</div>`; }
 
 // ─── START ────────────────────────────────────────────────────────────────────
@@ -2432,13 +2712,6 @@ init();
 
 // ── DELETE ────────────────────────────────────────────────────────────────────
 // ─── CSV EXPORT ───────────────────────────────────────────────────────────────
-// Standalone version of crLiveComm for use in exportCSV (outside render scope)
-function crLiveCommExport(r) {
-  const src = r.dealTable==='offplan'?DATA.offplan:r.dealTable==='secondary'?DATA.secondary:DATA.rental;
-  const d = src?.find(x=>n(x.id)===n(r.dealId));
-  if (!d) return n(r.totalCommission);
-  return r.dealTable==='offplan' ? commOP(d) : r.dealTable==='secondary' ? commSec(d) : commR(d);
-}
 // Escapes a single CSV cell value
 function csvCell(v) {
   if (v === null || v === undefined) return '';
@@ -2601,14 +2874,14 @@ window.exportCSV = function(table) {
         { label:'Project / Deal',       val: r => r.projectName },
         { label:'Deal Type',            val: r => r.dealTable==='offplan'?'Off Plan':r.dealTable==='secondary'?'Secondary':'Rental' },
         { label:'Deal ID',              val: r => r.dealId },
-        { label:'Total Comm (AED)',     val: r => crLiveCommExport(r) },
-        { label:'Est. VAT 5% (AED)',    val: r => (crLiveCommExport(r)*0.05).toFixed(2) },
+        { label:'Total Comm (AED)',     val: r => crLiveComm(r) },
+        { label:'Est. VAT 5% (AED)',    val: r => (crLiveComm(r)*0.05).toFixed(2) },
         { label:'Broker %',             val: r => n(r.brokerPct||50) },
-        { label:'Broker Share (AED)',   val: r => (crLiveCommExport(r)*n(r.brokerPct||50)/100).toFixed(2) },
+        { label:'Broker Share (AED)',   val: r => (crLiveComm(r)*n(r.brokerPct||50)/100).toFixed(2) },
         { label:'Company %',            val: r => n(r.companyPct||50) },
-        { label:'Company Share (AED)',  val: r => (crLiveCommExport(r)*n(r.companyPct||50)/100).toFixed(2) },
-        { label:'Amount Received (AED)',val: r => n(r.amountReceived) },
-        { label:'Balance (AED)',        val: r => (crLiveCommExport(r)-n(r.amountReceived)).toFixed(2) },
+        { label:'Company Share (AED)',  val: r => (crLiveComm(r)*n(r.companyPct||50)/100).toFixed(2) },
+        { label:'Broker Paid (AED)',      val: r => n(r.amountReceived) },
+        { label:'Broker Balance Due (AED)', val: r => Math.max(0,(crLiveComm(r)*n(r.brokerPct||50)/100)-n(r.amountReceived)).toFixed(2) },
         { label:'Status',               val: r => r.status },
         { label:'Notes',                val: r => r.notes },
       ];
@@ -2665,7 +2938,7 @@ async function renderAuditLog(pc) {
       // Format timestamp nicely
       const ts = r.ts ? r.ts.replace('T',' ').slice(0,19) : '—';
       return `<tr>
-        <td class="mono" style="font-size:.75rem;color:#94a3b8;white-space:nowrap">${esc(ts)} UTC</td>
+        <td class="mono" style="font-size:.75rem;color:#94a3b8;white-space:nowrap">${esc(ts)} GST</td>
         <td>
           <div style="font-weight:700;font-size:.85rem">${esc(r.username||'—')}</div>
           <div style="font-size:.72rem;color:#94a3b8">${esc(r.role||'')}</div>
@@ -2696,7 +2969,7 @@ async function renderAuditLog(pc) {
       <div class="search-row" style="flex-wrap:wrap;gap:8px;margin-bottom:16px">
         <div class="search-wrap" style="flex:1;min-width:180px">
           <span class="icon">🔍</span>
-          <input id="q-audit" placeholder="Search summary or username…" oninput="filterAuditLog()"/>
+          <input id="q-audit" placeholder="Search summary or username…" oninput="filterAuditD()"/>
         </div>
         <select id="sf-audit-action" style="width:130px" onchange="filterAuditLog()">
           <option value="">All Actions</option>
@@ -2718,7 +2991,7 @@ async function renderAuditLog(pc) {
       <div class="overflow">
         <table id="audit-table">
           <thead><tr>
-            <th style="width:155px">Timestamp (UTC)</th>
+            <th style="width:155px">Timestamp (GST)</th>
             <th>User</th>
             <th>Action</th>
             <th>Module</th>
@@ -2759,8 +3032,60 @@ window.filterAuditLog = function(reset) {
 };
 
 window.deleteRecord = async function(table, id, label) {
-  if(!canDo("canDelete")){ alert("You don't have permission to delete records."); return; }
-  if (!confirm('Are you sure you want to delete this ' + label + '? This cannot be undone.')) return;
+  if(!canDo("canDelete")){ showToast('⛔ You don\'t have permission to delete records.', '#dc2626'); return; }
+
+  // Fetch record name for a descriptive confirmation prompt
+  let recordDesc = label + ' #' + id;
+  try {
+    const rec = await q(`SELECT * FROM ${table} WHERE id=?`,[id]);
+    if(rec[0]) {
+      const r = rec[0];
+      if(table==='brokers')             recordDesc = `broker "${r.name}"`;
+      else if(table==='developers')     recordDesc = `developer "${r.name}"`;
+      else if(table==='clients')        recordDesc = `client "${r.name}"`;
+      else if(table==='offplan')        recordDesc = `off plan deal "${r.project} – ${r.unit}"`;
+      else if(table==='secondary')      recordDesc = `secondary deal "${r.property} ${r.propNo}"`;
+      else if(table==='rental')         recordDesc = `rental "${r.property} ${r.propNo}"`;
+      else if(table==='commission_release') recordDesc = `commission release for "${r.projectName}"`;
+    }
+  } catch(_){}
+
+  // Show a styled in-app confirm modal instead of window.confirm()
+  // #9 — Check if this deal has a linked Commission Release record
+  let crWarningHtml = '';
+  if(['offplan','secondary','rental'].includes(table)){
+    const linkedCR = DATA.commission_release.find(r => r.dealTable===table && n(r.dealId)===n(id));
+    if(linkedCR){
+      crWarningHtml = `<div style="background:#fff7ed;border:1px solid #fb923c;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:.82rem">
+        <b style="color:#c2410c">⚠️ Linked Commission Release</b><br>
+        <span style="color:#78350f">This deal has a Commission Release record (<b>${esc(linkedCR.projectName||'—')}</b>).
+        Deleting the deal will orphan the Commission Release — it will remain but lose its deal link.</span>
+      </div>`;
+    }
+  }
+  openModal('🗑️ Confirm Delete', `
+    <div style="padding:8px 0 4px">
+      ${crWarningHtml}
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+        <div style="width:46px;height:46px;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex-shrink:0">🗑️</div>
+        <div>
+          <div style="font-weight:700;font-size:.95rem;color:#1a2744;margin-bottom:4px">Delete ${esc(recordDesc)}?</div>
+          <div style="color:#64748b;font-size:.83rem">This action is permanent and cannot be undone.</div>
+        </div>
+      </div>
+      <div id="del-err" style="color:#ef4444;font-size:.8rem;margin-bottom:10px;display:none"></div>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button class="btn" onclick="closeModal()" style="padding:9px 20px">Cancel</button>
+        <button class="btn btn-delete" id="del-confirm-btn" style="padding:9px 20px"
+          onclick="window._confirmDelete('${table}',${id},'${esc(recordDesc)}')">🗑️ Delete</button>
+      </div>
+    </div>`);
+};
+
+window._confirmDelete = async function(table, id, recordDesc) {
+  const btn = document.getElementById('del-confirm-btn');
+  const errEl = document.getElementById('del-err');
+  if(btn){ btn.disabled=true; btn.textContent='Deleting…'; }
   const renderMap = {
     brokers:    () => renderBrokers(document.getElementById('page-content')),
     developers: () => renderDevelopers(document.getElementById('page-content')),
@@ -2771,28 +3096,15 @@ window.deleteRecord = async function(table, id, label) {
     commission_release: () => renderCommissionRelease(document.getElementById('page-content')),
   };
   try {
-    // Capture a summary before deleting
-    let summary = `Deleted ${label} #${id}`;
-    try {
-      const rec = await q(`SELECT * FROM ${table} WHERE id=?`,[id]);
-      if(rec[0]) {
-        const r = rec[0];
-        if(table==='brokers') summary=`Deleted broker: ${r.name}`;
-        else if(table==='developers') summary=`Deleted developer: ${r.name}`;
-        else if(table==='clients') summary=`Deleted client: ${r.name}`;
-        else if(table==='offplan') summary=`Deleted off plan deal: ${r.project} – ${r.unit}`;
-        else if(table==='secondary') summary=`Deleted secondary deal: ${r.property} ${r.propNo}`;
-        else if(table==='rental') summary=`Deleted rental: ${r.property} ${r.propNo}`;
-        else if(table==='commission_release') summary=`Deleted commission release: ${r.projectName} – AED ${n(r.totalCommission).toLocaleString()}`;
-      }
-    } catch(_){}
-    await q(`DELETE FROM ${table} WHERE id=${id}`);
-    await auditLog('DELETE',table,id,summary);
+    await q(`DELETE FROM ${table} WHERE id=?`, [id]);
+    await auditLog('DELETE', table, id, `Deleted ${recordDesc}`);
     await reload(table);
     closeModal();
-    renderMap[table]();
+    renderMap[table]?.();
+    showToast(`🗑️ Deleted ${recordDesc}`);
   } catch(e) {
-    alert('Delete failed: ' + e.message);
+    if(errEl){ errEl.textContent='Delete failed: '+e.message; errEl.style.display='block'; }
+    if(btn){ btn.disabled=false; btn.textContent='🗑️ Delete'; }
   }
 };
 </script>
