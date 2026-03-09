@@ -213,8 +213,9 @@
     const GOLD = "#B8960C", GOLD_D = "#9A7D0A", NAVY = "#1C1C2E", NAVY2 = "#2D2D45";
 
     // ── ACCOUNTING CONSTANTS ──────────────────────────
-    const DEAL_STAGES = ["Lead", "EOI", "booking form signed", "First payment paid", "MOU signed", "SPA signed", "Handover", "Commission Earned", "Commission Collected", "Revenue Recognised"];
-    const REV_STAGES = ["Commission Earned", "Commission Collected", "Revenue Recognised"];
+    const DEAL_STAGES = ["Lead", "EOI", "booking form signed", "First payment paid", "MOU signed", "SPA signed", "Handover", "Commission Earned", "Commission Collected"];
+    const REV_STAGES = ["Commission Earned", "Commission Collected"];  // Stages eligible for revenue recognition
+    const REVENUE_STATUS = ["Not Eligible", "Eligible", "Pending Approval", "Approved", "Recognised", "Reversed"];  // Accounting status (separate from deal stage)
     const ACCT_TYPES = ["Asset", "Liability", "Equity", "Revenue", "Expense"];
     const NORMAL_BAL = { Asset: "debit", Expense: "debit", Liability: "credit", Equity: "credit", Revenue: "credit" };
     const DEAL_TYPES = ["Off-Plan", "Secondary", "Rental"];
@@ -316,6 +317,23 @@
     const fromCents = c => ((c || 0) / 100).toFixed(2);
     const uid = () => "_" + Math.random().toString(36).substr(2, 9);
     const todayStr = () => new Date().toISOString().split("T")[0];
+    
+    // VAT Account Helper - Backwards Compatible with old a2100 account
+    const getVATAccounts = (accounts) => {
+      let outputVAT = accounts.find(a => a.isOutputVAT);  // Try new a2101
+      let inputVAT = accounts.find(a => a.isInputVAT);    // Try new a1201
+      
+      // Backwards compatibility: Fall back to old VAT account a2100
+      if (!outputVAT || !inputVAT) {
+        const oldVATAcct = accounts.find(a => a.id === "a2100");
+        if (oldVATAcct) {
+          outputVAT = outputVAT || oldVATAcct;
+          inputVAT = inputVAT || oldVATAcct;
+        }
+      }
+      
+      return { outputVAT, inputVAT };
+    };
     const fmtDate = d => { if (!d) return "—"; try { return new Date(d + "T12:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }); } catch { return d; } };
     // localStorage kept only as offline fallback cache
     const ls_get = (k, fb) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch { return fb; } };
@@ -375,7 +393,7 @@
       { id: "a5510", code: "5510", name: "Secondary Market Commission Agent Payment", type: "Expense", isBank: false, isReceivable: false, isPayable: false, isVATControl: false, isOutputVAT: false, isInputVAT: false },
       { id: "a5600", code: "5600", name: "Bank Fees", type: "Expense", isBank: false, isReceivable: false, isPayable: false, isVATControl: false, isOutputVAT: false, isInputVAT: false },
       { id: "a6000", code: "6000", name: "Legal Services", type: "Expense", isBank: false, isReceivable: false, isPayable: false, isVATControl: false, isOutputVAT: false, isInputVAT: false },
-      { id: "a9990", code: "9990", name: "Bank Internal Adjustment", type: "Equity", isBank: false, isReceivable: false, isPayable: false, isVATControl: false }
+      { id: "a1190", code: "1190", name: "Bank Reconciliation Adjustments", type: "Asset", isBank: false, isReceivable: false, isPayable: false, isVATControl: false, isOutputVAT: false, isInputVAT: false }
     ];
 
 
@@ -1400,14 +1418,16 @@
     // ╔══════════════════════════════════════════╗
     //  DEALS / PIPELINE
     // ╚══════════════════════════════════════════╝
-    function DealsPage({ accounts, txns, deals, setDeals, customers, brokers, developers, invoices, setInvoices, saveTxn }) {
+    function DealsPage({ accounts, txns, setTxns, deals, setDeals, customers, brokers, developers, invoices, setInvoices, saveTxn }) {
       const [open, setOpen] = useState(false); const [preview, setPreview] = useState(false);
       const [pendTxn, setPendTxn] = useState(null); const [pendInv, setPendInv] = useState(null);
       const [editId, setEditId] = useState(null); const [errs, setErrs] = useState([]);
       const blank = {
         property_name: "", developer_id: "", developer: "", broker_id: "", broker_name: "", client_name: "", customer_id: "", type: "Off-Plan", stage: "Lead", commission_pct: "", expected_commission_net: "", vat_applicable: true, notes: "", created_at: todayStr(), transaction_value: "", unit_no: "", invoice_no: "", aml_no: "", kyc_sent: "NO", kyc_received: "NO",
         seller_name: "", seller_id: "", seller_comm_pct: "", buyer_comm_pct: "", seller_comm_amt: "", buyer_comm_amt: "", comm_discount: "", contract_no: "",
-        contract_type: "1 Year Contract", rent_start: "", rent_end: "", renewal_reminder: "", comm_incl_vat: ""
+        contract_type: "1 Year Contract", rent_start: "", rent_end: "", renewal_reminder: "", comm_incl_vat: "",
+        // Revenue Recognition Control Fields (separate from deal stage)
+        revenue_status: "Not Eligible", revenue_requested_by: null, revenue_requested_at: null, revenue_approved_by: null, revenue_approved_at: null, revenue_recognised_at: null, revenue_txn_id: null, revenue_invoice_id: null
       };
       const [f, setF] = useState(blank);
 
@@ -1416,6 +1436,12 @@
       const save = () => {
         if (!f.property_name) { setErrs(["Property name required"]); return; }
         const rec = { ...f, expected_commission_net: toCents(f.expected_commission_net), transaction_value: toCents(f.transaction_value) };
+        
+        // Auto-set revenue_status based on deal stage (only if not already recognised)
+        if (!rec.revenue_recognised_at) {
+          rec.revenue_status = REV_STAGES.includes(rec.stage) ? "Eligible" : "Not Eligible";
+        }
+        
         if (editId) setDeals(p => p.map(d => d.id === editId ? { ...d, ...rec } : d));
         else setDeals(p => [...p, { ...rec, id: "d" + uid() }]);
         setOpen(false); toast(`Deal ${editId ? "updated" : "created"} ✅`, "success");
@@ -1423,15 +1449,32 @@
 
       const updateStage = (id, stage) => {
         // 1. Optimistic local + full-collection Firestore write (via setDeals = setDealsFS)
-        setDeals(p => p.map(d => d.id === id ? { ...d, stage } : d));
+        setDeals(p => p.map(d => {
+          if (d.id !== id) return d;
+          // Auto-update revenue_status when stage changes (only if not already recognised)
+          const updates = { ...d, stage };
+          if (!d.revenue_recognised_at) {
+            updates.revenue_status = REV_STAGES.includes(stage) ? "Eligible" : "Not Eligible";
+          }
+          return updates;
+        }));
         // 2. Also patch just this doc directly so onSnapshot doesn't revert us
-        db.collection('deals').doc(id).update({ stage })
+        const updates = { stage };
+        // Check if deal is not recognised before updating revenue_status
+        const deal = deals.find(d => d.id === id);
+        if (deal && !deal.revenue_recognised_at) {
+          updates.revenue_status = REV_STAGES.includes(stage) ? "Eligible" : "Not Eligible";
+        }
+        db.collection('deals').doc(id).update(updates)
           .catch(() => { }); // best-effort; setDeals already wrote the full array
         toast(`Stage → ${stage}`, "success");
       };
 
-      const recognise = (deal) => {
-        if (!REV_STAGES.includes(deal.stage)) { toast(`Deal at "${deal.stage}" — advance to "Commission Collected" first`, "error"); return; }
+      // NEW REVENUE RECOGNITION WORKFLOW with Approval
+      const requestRevenue = (deal) => {
+        if (!REV_STAGES.includes(deal.stage)) { toast(`Deal at "${deal.stage}" — advance to "Commission Earned" first`, "error"); return; }
+        if (deal.revenue_status === "Recognised") { toast("Revenue already recognised for this deal", "warning"); return; }
+        
         // deal.expected_commission_net is stored in CENTS — convert to AED for display/invoice
         const netAED = deal.expected_commission_net / 100;
         const vatAED = deal.vat_applicable ? Math.round(netAED * 5) / 100 : 0;
@@ -1442,8 +1485,8 @@
         const arA = accounts.find(a => a.isReceivable);
         const rvMap = { "Off-Plan": "4000", Secondary: "4010", Rental: "4020" };
         const revA = accounts.find(a => a.type === "Revenue" && a.code === rvMap[deal.type]);
-        const outputVAT = accounts.find(a => a.isOutputVAT);
-        if (!arA || !revA || !outputVAT) { toast("Missing AR / Revenue / Output VAT in COA", "error"); return; }
+        const { outputVAT } = getVATAccounts(accounts);
+        if (!arA || !revA || !outputVAT) { toast("Missing AR / Revenue / VAT accounts in COA", "error"); return; }
         const ref = "INV-" + new Date().getFullYear() + "-" + Math.floor(Math.random() * 9000 + 1000);
         const lines = [
           { id: uid(), accountId: arA.id, debit: grossCents, credit: 0, memo: "AR gross incl. VAT", deal_id: deal.id, property_id: deal.property_name, broker_id: deal.broker_id, developer_id: deal.developer },
@@ -1455,22 +1498,118 @@
         const inv = {
           id: uid(), deal_id: deal.id, customer_id: deal.customer_id, date: todayStr(), ref,
           lines: [{ id: uid(), desc: `Commission — ${deal.property_name}`, net: netAED, vatRate: deal.vat_applicable ? 5 : 0, vat: vatAED, gross: grossAED }],
-          totals: { net: netAED, vat: vatAED, gross: grossAED }, status: "Posted", txn_id: txn.id
+          totals: { net: netAED, vat: vatAED, gross: grossAED }, status: "Draft", txn_id: null  // Invoice starts as Draft
         };
         setPendTxn(txn); setPendInv(inv); setPreview(true);
       };
 
-      const confirm = () => {
-        saveTxn(pendTxn);
+      const confirmRequest = () => {
+        // Save draft invoice (not posted yet)
         setInvoices(p => [...p, pendInv]);
-        // Advance the deal stage so the button disappears permanently
+        
+        // Update deal to Pending Approval
         if (pendTxn?.deal_id) {
-          setDeals(p => p.map(d => d.id === pendTxn.deal_id ? { ...d, stage: "Revenue Recognised" } : d));
-          db.collection('deals').doc(pendTxn.deal_id).update({ stage: "Revenue Recognised" }).catch(() => { });
+          const currentUser = auth.currentUser;
+          const username = currentUser?.email?.split('@')[0] || currentUser?.uid || "User";
+          setDeals(p => p.map(d => d.id === pendTxn.deal_id ? { 
+            ...d, 
+            revenue_status: "Pending Approval",
+            revenue_requested_by: username,
+            revenue_requested_at: new Date().toISOString(),
+            revenue_invoice_id: pendInv.id
+          } : d));
+          db.collection('deals').doc(pendTxn.deal_id).update({ 
+            revenue_status: "Pending Approval",
+            revenue_requested_by: username,
+            revenue_requested_at: new Date().toISOString(),
+            revenue_invoice_id: pendInv.id
+          }).catch(() => { });
         }
         setPreview(false);
-        toast("Revenue recognised & invoice posted ✅", "success");
+        toast("Revenue recognition requested — awaiting approval ⏳", "success");
       };
+      
+      const approveRevenue = (deal) => {
+        const currentUser = auth.currentUser;
+        const username = currentUser?.email?.split('@')[0] || currentUser?.uid || "Manager";
+        setDeals(p => p.map(d => d.id === deal.id ? { 
+          ...d, 
+          revenue_status: "Approved",
+          revenue_approved_by: username,
+          revenue_approved_at: new Date().toISOString()
+        } : d));
+        db.collection('deals').doc(deal.id).update({ 
+          revenue_status: "Approved",
+          revenue_approved_by: username,
+          revenue_approved_at: new Date().toISOString()
+        }).catch(() => { });
+        toast("Revenue approved ✅ — ready to post", "success");
+      };
+      
+      const rejectRevenue = (deal) => {
+        // Revert to Eligible and void the draft invoice
+        setDeals(p => p.map(d => d.id === deal.id ? { 
+          ...d, 
+          revenue_status: "Eligible",
+          revenue_requested_by: null,
+          revenue_requested_at: null,
+          revenue_invoice_id: null
+        } : d));
+        if (deal.revenue_invoice_id) {
+          setInvoices(p => p.map(i => i.id === deal.revenue_invoice_id ? { ...i, status: "Void" } : i));
+        }
+        db.collection('deals').doc(deal.id).update({ 
+          revenue_status: "Eligible",
+          revenue_requested_by: null,
+          revenue_requested_at: null,
+          revenue_invoice_id: null
+        }).catch(() => { });
+        toast("Revenue request rejected ❌", "warning");
+      };
+      
+      const postRevenue = (deal) => {
+        // Find the draft invoice and create the transaction
+        const inv = invoices.find(i => i.id === deal.revenue_invoice_id);
+        if (!inv) { toast("Invoice not found", "error"); return; }
+        
+        // Build transaction from invoice
+        const netC = toCents(inv.totals.net), vatC = toCents(inv.totals.vat), grossC = toCents(inv.totals.gross);
+        const arA = accounts.find(a => a.isReceivable);
+        const rvMap = { "Off-Plan": "4000", Secondary: "4010", Rental: "4020" };
+        const revA = accounts.find(a => a.type === "Revenue" && a.code === rvMap[deal.type]);
+        const { outputVAT } = getVATAccounts(accounts);
+        if (!arA || !revA || !outputVAT) { toast("Missing accounts", "error"); return; }
+        
+        const lines = [
+          { id: uid(), accountId: arA.id, debit: grossC, credit: 0, memo: "AR gross incl. VAT", deal_id: deal.id, property_id: deal.property_name, broker_id: deal.broker_id, developer_id: deal.developer },
+          { id: uid(), accountId: revA.id, debit: 0, credit: netC, memo: "Commission net", deal_id: deal.id, property_id: deal.property_name, broker_id: deal.broker_id, developer_id: deal.developer },
+        ];
+        if (vatC > 0) lines.push({ id: uid(), accountId: outputVAT.id, debit: 0, credit: vatC, memo: "Output VAT 5%", deal_id: deal.id, property_id: deal.property_name, broker_id: deal.broker_id, developer_id: deal.developer });
+        
+        const txn = { id: uid(), date: inv.date, description: `Commission Invoice — ${deal.property_name}`, ref: inv.ref, counterparty: deal.client_name, tags: "invoice", isVoid: false, lines, deal_id: deal.id };
+        
+        // Post transaction
+        saveTxn(txn);
+        
+        // Update invoice to Posted
+        setInvoices(p => p.map(i => i.id === inv.id ? { ...i, status: "Posted", txn_id: txn.id } : i));
+        
+        // Update deal to Recognised
+        setDeals(p => p.map(d => d.id === deal.id ? { 
+          ...d, 
+          revenue_status: "Recognised",
+          revenue_recognised_at: new Date().toISOString(),
+          revenue_txn_id: txn.id
+        } : d));
+        db.collection('deals').doc(deal.id).update({ 
+          revenue_status: "Recognised",
+          revenue_recognised_at: new Date().toISOString(),
+          revenue_txn_id: txn.id
+        }).catch(() => { });
+        
+        toast("Revenue posted to books ✅", "success");
+      };
+      
       const stageCount = DEAL_STAGES.reduce((m, s) => { m[s] = deals.filter(d => d.stage === s).length; return m; }, {});
 
       return <div>
@@ -1505,6 +1644,7 @@
               <th style={C.th}>Broker</th>
               <th style={C.th}>Split %</th>
               <th style={C.th}>Stage</th>
+              <th style={C.th}>Revenue Status</th>
               <th style={C.th}>AML No.</th>
               <th style={C.th}>KYC Sent</th>
               <th style={C.th}>KYC Recv</th>
@@ -1517,9 +1657,11 @@
               const kycR = d.kyc_received || (d.notes?.match(/KYC received: (YES|NO)/)?.[1]) || "—";
               const aml = d.aml_no || (d.notes?.match(/AML: (\d+)/)?.[1]) || "—";
               const isSecondary = d.type === "Secondary";
-              const isLocked = d.stage === "Revenue Recognised";
-              const rowBg = isLocked ? "#F0FDF4" : "transparent";
-              return <tr key={d.id} style={{ background: rowBg, opacity: isLocked ? 0.85 : 1 }}>
+              // NEW: Use revenue_status instead of stage for locking
+              const revStatus = d.revenue_status || "Not Eligible";
+              const isRecognised = revStatus === "Recognised";
+              const rowBg = isRecognised ? "#F0FDF4" : "transparent";
+              return <tr key={d.id} style={{ background: rowBg, opacity: isRecognised ? 0.9 : 1 }}>
                 <td style={{ ...C.td, fontFamily: "monospace", fontSize: 12, whiteSpace: "nowrap" }}>{d.created_at ? fmtDate(d.created_at) : "—"}</td>
                 <td style={C.td}>
                   <div style={{ fontWeight: 500, maxWidth: 170, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }}>{d.property_name}</div>
@@ -1538,23 +1680,96 @@
                     : <span style={C.badge("info")}>{d.commission_split ?? br?.commission_split ?? 0}%</span>}
                 </td>
                 <td style={C.td}>
-                  {isLocked
-                    ? <span style={{ ...C.badge("success"), gap: 4 }}>🔒 Revenue Recognised</span>
-                    : <select style={{ ...C.select, width: "auto", padding: "4px 8px", fontSize: 12 }} value={d.stage} onChange={e => updateStage(d.id, e.target.value)}>
-                      {DEAL_STAGES.map(s => <option key={s}>{s}</option>)}
-                    </select>}
+                  <select style={{ ...C.select, width: "auto", padding: "4px 8px", fontSize: 12 }} value={d.stage} onChange={e => updateStage(d.id, e.target.value)}>
+                    {DEAL_STAGES.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                </td>
+                <td style={C.td}>
+                  {revStatus === "Not Eligible" && <span style={C.badge("neutral")}>Not Eligible</span>}
+                  {revStatus === "Eligible" && <span style={C.badge("info")}>✓ Eligible</span>}
+                  {revStatus === "Pending Approval" && (
+                    <div style={{ fontSize: 11 }}>
+                      <span style={{ ...C.badge("warning"), display: "block", marginBottom: 3 }}>⏳ Pending</span>
+                      <div style={{ color: "#6B7280", fontSize: 10 }}>by {d.revenue_requested_by}</div>
+                    </div>
+                  )}
+                  {revStatus === "Approved" && <span style={C.badge("success")}>✓ Approved</span>}
+                  {revStatus === "Recognised" && <span style={C.badge("success")}>✅ Recognised</span>}
+                  {revStatus === "Reversed" && <span style={C.badge("danger")}>⚠ Reversed</span>}
                 </td>
                 <td style={{ ...C.td, fontFamily: "monospace", fontSize: 11 }}>{aml !== "—" ? <span style={C.badge("neutral")}>{aml}</span> : "—"}</td>
                 <td style={{ ...C.td, textAlign: "center" }}><span style={C.badge(kycS === "YES" ? "success" : kycS === "NO" ? "danger" : "neutral")}>{kycS}</span></td>
                 <td style={{ ...C.td, textAlign: "center" }}><span style={C.badge(kycR === "YES" ? "success" : kycR === "NO" ? "danger" : "neutral")}>{kycR}</span></td>
-                <td style={{ ...C.td, textAlign: "right", fontWeight: 600, color: isLocked ? "#059669" : GOLD }}>{fmtAED(d.expected_commission_net)}</td>
+                <td style={{ ...C.td, textAlign: "right", fontWeight: 600, color: isRecognised ? "#059669" : GOLD }}>{fmtAED(d.expected_commission_net)}</td>
                 <td style={C.td}>
-                  {isLocked
-                    ? <span style={{ ...C.badge("success"), fontSize: 12, padding: "4px 10px" }}>✅ Done</span>
-                    : <div style={{ display: "flex", gap: 5, flexWrap: "nowrap" }}>
-                      {REV_STAGES.includes(d.stage) && <button style={C.btn("success", true)} onClick={() => recognise(d)}>Recognise Revenue</button>}
-                      <button style={C.btn("secondary", true)} onClick={() => { setEditId(d.id); setF({ ...d, expected_commission_net: fromCents(d.expected_commission_net), transaction_value: fromCents(d.transaction_value) }); setErrs([]); setOpen(true); }}>Edit</button>
-                    </div>}
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center" }}>
+                    {/* Always show Edit button */}
+                    <button 
+                      style={C.btn("secondary", true)} 
+                      onClick={() => { setEditId(d.id); setF({ ...d, expected_commission_net: fromCents(d.expected_commission_net), transaction_value: fromCents(d.transaction_value) }); setErrs([]); setOpen(true); }}>
+                      Edit
+                    </button>
+                    
+                    {/* Revenue workflow buttons based on status */}
+                    {revStatus === "Eligible" && (
+                      <button style={C.btn("success", true)} onClick={() => requestRevenue(d)}>
+                        Request Revenue
+                      </button>
+                    )}
+                    
+                    {revStatus === "Pending Approval" && (
+                      <>
+                        <button style={{ ...C.btn("success", true), fontSize: 11 }} onClick={() => approveRevenue(d)}>
+                          ✓ Approve
+                        </button>
+                        <button style={{ ...C.btn("danger", true), fontSize: 11 }} onClick={() => rejectRevenue(d)}>
+                          ✗ Reject
+                        </button>
+                      </>
+                    )}
+                    
+                    {revStatus === "Approved" && (
+                      <button style={C.btn("primary", true)} onClick={() => postRevenue(d)}>
+                        Post Revenue
+                      </button>
+                    )}
+                    
+                    {revStatus === "Recognised" && (
+                      <button 
+                        style={{ ...C.btn("warning", true), fontSize: 11 }} 
+                        onClick={() => {
+                          if (confirm("⚠️ Reverse this revenue?\n\nThis will:\n• Void the revenue transaction\n• Void the invoice\n• Set status back to Eligible\n\nYou can re-recognize later.")) {
+                            // Void transaction
+                            if (d.revenue_txn_id) {
+                              setTxns(p => p.map(t => t.id === d.revenue_txn_id ? { ...t, isVoid: true } : t));
+                            }
+                            // Void invoice
+                            if (d.revenue_invoice_id) {
+                              setInvoices(p => p.map(i => i.id === d.revenue_invoice_id ? { ...i, status: "Void" } : i));
+                            }
+                            // Revert deal
+                            setDeals(p => p.map(x => x.id === d.id ? { 
+                              ...x, 
+                              revenue_status: "Reversed",
+                              revenue_txn_id: null,
+                              revenue_invoice_id: null
+                            } : x));
+                            db.collection('deals').doc(d.id).update({ 
+                              revenue_status: "Reversed"
+                            }).catch(() => {});
+                            toast("Revenue reversed - you can now re-recognize", "success");
+                          }
+                        }}>
+                        🔄 Reverse
+                      </button>
+                    )}
+                    
+                    {revStatus === "Reversed" && (
+                      <button style={C.btn("success", true)} onClick={() => requestRevenue(d)}>
+                        Re-Request Revenue
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>;
             })}</tbody>
@@ -1665,7 +1880,15 @@
           </FG>
           {!REV_STAGES.includes(f.stage || "Lead") && <div style={{ ...C.warn, marginTop: 14 }}>⚠️ Revenue recognition blocked at stage <strong>"{f.stage}"</strong>. Advance deal to "Commission Earned" to post revenue.</div>}
         </Modal>
-        <PostingPreview open={preview} onClose={() => setPreview(false)} lines={pendTxn?.lines || []} accounts={accounts} onConfirm={confirm} header={pendTxn || {}} />
+        <PostingPreview 
+          open={preview} 
+          onClose={() => setPreview(false)} 
+          lines={pendTxn?.lines || []} 
+          accounts={accounts} 
+          onConfirm={confirmRequest} 
+          header={pendTxn || {}} 
+          confirmLabel="Submit Request" 
+        />
       </div>;
     }
 
@@ -1691,8 +1914,8 @@
         const arA = accounts.find(a => a.isReceivable);
         const rvMap = { "Off-Plan": "4000", Secondary: "4010", Rental: "4000" };
         const revA = accounts.find(a => a.type === "Revenue" && a.code === rvMap[deal.type]);
-        const outputVAT = accounts.find(a => a.isOutputVAT);
-        if (!arA || !revA || !outputVAT) { toast("Missing AR / Revenue / Output VAT in COA", "error"); return null; }
+        const { outputVAT } = getVATAccounts(accounts);
+        if (!arA || !revA || !outputVAT) { toast("Missing AR / Revenue / VAT accounts in COA", "error"); return null; }
         const netC = toCents(inv.totals.net), vatC = toCents(inv.totals.vat), grossC = toCents(inv.totals.gross);
         const lines = [
           { id: uid(), accountId: arA.id, debit: grossC, credit: 0, memo: `AR — ${inv.ref}`, deal_id: deal.id, property_id: deal.property_name, broker_id: deal.broker_id, developer_id: deal.developer },
@@ -1971,7 +2194,7 @@
         const vat = amtC - net;
         const lines = [{ id: uid(), accountId: f.expense_account_id, debit: net, credit: 0, memo: f.memo || f.description }];
         if (vat > 0) {
-          const inputVAT = accounts.find(a => a.isInputVAT);
+          const { inputVAT } = getVATAccounts(accounts);
           if (inputVAT) lines.push({ id: uid(), accountId: inputVAT.id, debit: vat, credit: 0, memo: "Input VAT" });
         }
         if (mode === "expense") lines.push({ id: uid(), accountId: f.pay_account_id, debit: 0, credit: amtC, memo: "Paid immediately" });
@@ -2093,9 +2316,12 @@
         const vRate = parseFloat(f.vatRate) || 0;
         let outputVAT = null, inputVAT = null;
         if (vRate > 0 && f.type !== "transfer") {
-          outputVAT = accounts.find(a => a.isOutputVAT);
-          inputVAT = accounts.find(a => a.isInputVAT);
-          if (!outputVAT || !inputVAT) es.push("VAT accounts not found in Chart of Accounts");
+          const vat = getVATAccounts(accounts);
+          outputVAT = vat.outputVAT;
+          inputVAT = vat.inputVAT;
+          if (!outputVAT || !inputVAT) {
+            es.push("VAT accounts not found in Chart of Accounts");
+          }
         }
 
         setErrs(es); if (es.length) return;
@@ -2135,7 +2361,14 @@
         const txn = { id: uid(), date: f.date, description: f.description, ref: f.ref || "", counterparty: f.counterparty || "", tags: "banking," + f.type, isVoid: false, lines };
         setPendTxn(txn); setPreview(true);
       };
-      const confirm = () => { saveTxn(pendTxn); setPreview(false); setOpen(false); toast("Bank transaction posted ✅", "success"); };
+      const confirm = () => { 
+        console.log('🏦 Banking confirm called');
+        console.log('🏦 pendTxn:', pendTxn); 
+        saveTxn(pendTxn); 
+        setPreview(false); 
+        setOpen(false); 
+        toast("Bank transaction posted ✅", "success"); 
+      };
 
       const typeLabel = { deposit: " Money In (Deposit)", withdrawal: " Money Out (Withdrawal)", transfer: " Transfer Between Banks" };
       const typeHint = {
@@ -2178,7 +2411,32 @@
                 <td style={{ ...C.td, textAlign: "right", color: "#DC2626", fontWeight: r.net < 0 ? 600 : 400, whiteSpace: "nowrap" }}>{r.net < 0 ? fmtAED(-r.net) : "—"}</td>
                 <td style={{ ...C.td, textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>{fmtAED(r.runBal)}</td>
                 <td style={{ ...C.td, textAlign: "right", whiteSpace: "nowrap" }}>
-                  <button style={{ ...C.btn("secondary", true), padding: "4px 8px", marginRight: 6 }} onClick={() => { const bankLine = r.lines.find(l => l.accountId === bankId); const offsetLine = r.lines.find(l => l.accountId !== bankId && !accounts.find(a => a.id === l.accountId)?.isVATControl); setEditTxn({ id: r.id, date: r.date, description: r.description, ref: r.ref || "", counterparty: r.counterparty || "", memo: offsetLine?.memo || "", offsetAccountId: offsetLine?.accountId || "", amount: fromCents(Math.abs((bankLine?.debit || 0) + (bankLine?.credit || 0))), type: (bankLine?.debit || 0) > 0 ? "deposit" : "withdrawal", lines: r.lines, tags: r.tags || "banking" }); setEditErrs([]); }}>✏️ Edit</button>
+                  <button style={{ ...C.btn("secondary", true), padding: "4px 8px", marginRight: 6 }} onClick={() => { 
+                    const bankLine = r.lines.find(l => l.accountId === bankId); 
+                    // Find offset line (exclude bank account and VAT accounts)
+                    const offsetLine = r.lines.find(l => {
+                      const acct = accounts.find(a => a.id === l.accountId);
+                      // Skip bank account
+                      if (l.accountId === bankId) return false;
+                      // Skip VAT accounts (check all VAT flags)
+                      if (acct && (acct.isOutputVAT || acct.isInputVAT || acct.isVATControl || acct.id === "a2100" || acct.id === "a2101" || acct.id === "a1201")) return false;
+                      return true;
+                    });
+                    setEditTxn({ 
+                      id: r.id, 
+                      date: r.date, 
+                      description: r.description, 
+                      ref: r.ref || "", 
+                      counterparty: r.counterparty || "", 
+                      memo: offsetLine?.memo || "", 
+                      offsetAccountId: offsetLine?.accountId || "", 
+                      amount: fromCents(Math.abs((bankLine?.debit || 0) + (bankLine?.credit || 0))), 
+                      type: (bankLine?.debit || 0) > 0 ? "deposit" : "withdrawal", 
+                      lines: r.lines, 
+                      tags: r.tags || "banking" 
+                    }); 
+                    setEditErrs([]); 
+                  }}>✏️ Edit</button>
                   <button style={{ ...C.btn("danger", true), padding: "4px 8px" }} onClick={() => { if (confirm("Permanently delete this transaction?")) { deleteTxn(r.id); toast("Transaction deleted", "success"); } }}>🗑️ Delete</button>
                 </td>
               </tr>)}</tbody>
@@ -2510,22 +2768,34 @@
         const tDr = accounts.reduce((s, a) => s + (ledger[a.id]?.debit || 0), 0); const tCr = accounts.reduce((s, a) => s + (ledger[a.id]?.credit || 0), 0);
         tDr === tCr ? P("Trial Balance: Dr=Cr ✅", `Both sides = ${fmtAED(tDr)}`) : F("Trial Balance imbalance", `Dr ${fmtAED(tDr)} ≠ Cr ${fmtAED(tCr)}`);
         // 3. Invoice VAT successfully posted to Journal
-        const outputVAT = accounts.find(a => a.isOutputVAT);
-        const activeInvs = invoices.filter(i => i.status !== "Void");
+        const { outputVAT } = getVATAccounts(accounts);  // Use backwards-compatible helper
+        const activeInvs = invoices.filter(i => i.status === "Posted");  // Only count Posted invoices, not Drafts
         const invVAT = activeInvs.reduce((s, i) => s + toCents(i.totals?.vat || 0), 0);
         let postedVAT = 0;
         activeInvs.forEach(inv => {
           const t = txns.find(x => x.id === inv.txn_id);
-          if (t && outputVAT) postedVAT += t.lines.filter(l => l.accountId === outputVAT.id && l.credit > 0).reduce((s, l) => s + l.credit, 0);
+          if (t && outputVAT) {
+            // Check for Output VAT credits in the transaction
+            postedVAT += t.lines.filter(l => l.accountId === outputVAT.id && l.credit > 0).reduce((s, l) => s + l.credit, 0);
+          }
         });
         Math.abs(postedVAT - invVAT) < 100 ? P("Invoice Output VAT matches Journal postings ✅", `Matched perfectly: ${fmtAED(invVAT)}`) : F("VAT Data Sync Mismatch", `Invoices sum to ${fmtAED(invVAT)}, but journal posted ${fmtAED(postedVAT)}`);
         // 4. Revenue at net only
         const revAccts = accounts.filter(a => a.type === "Revenue"); let revOk = true;
-        invoices.forEach(inv => { if (inv.status === "Void") return; const t = txns.find(x => x.id === inv.txn_id); if (!t) return; const revLines = t.lines.filter(l => revAccts.some(a => a.id === l.accountId)); const revTotal = revLines.reduce((s, l) => s + (l.credit - l.debit), 0); const netC = toCents(inv.totals?.net || 0); if (Math.abs(revTotal - netC) > 50) { revOk = false; F(`Invoice ${inv.ref}: Revenue posted ≠ Net`, `Rev: ${fmtAED(revTotal)}, Net: ${fmtAED(netC)}`); } });
+        invoices.filter(i => i.status === "Posted").forEach(inv => { const t = txns.find(x => x.id === inv.txn_id); if (!t) return; const revLines = t.lines.filter(l => revAccts.some(a => a.id === l.accountId)); const revTotal = revLines.reduce((s, l) => s + (l.credit - l.debit), 0); const netC = toCents(inv.totals?.net || 0); if (Math.abs(revTotal - netC) > 50) { revOk = false; F(`Invoice ${inv.ref}: Revenue posted ≠ Net`, `Rev: ${fmtAED(revTotal)}, Net: ${fmtAED(netC)}`); } });
         if (revOk) P("Revenue recognised at NET amount only (not gross) ✅");
         // 5. No revenue on ineligible deals
         const badRev = txns.filter(t => !t.isVoid).flatMap(t => t.lines.filter(l => { const a = accounts.find(x => x.id === l.accountId); return a?.type === "Revenue" && l.credit > 0 && l.deal_id; })).filter(l => { const d = deals.find(x => x.id === l.deal_id); return d && !REV_STAGES.includes(d.stage); });
-        P("No revenue on ineligible deal stages ✅", `${badRev.length} violations (expected for bulk imported data)`);
+        if (badRev.length === 0) {
+          P("No revenue on ineligible deal stages ✅", "All revenue properly linked to eligible deals");
+        } else {
+          F("Revenue recorded on ineligible deal stages ❌", `${badRev.length} violation(s) found - revenue should only be recognized at: ${REV_STAGES.join(', ')}`);
+          badRev.forEach(l => {
+            const d = deals.find(x => x.id === l.deal_id);
+            const t = txns.find(x => x.lines.includes(l));
+            F(`  → Deal: ${d?.property_name || l.deal_id}`, `Stage: "${d?.stage}" (not eligible) - Amount: ${fmtAED(l.credit)} - Txn: ${t?.ref || t?.id}`);
+          });
+        }
         // 6. Double-entry minimum 2 lines
         const single = txns.filter(t => !t.isVoid && t.lines.length < 2);
         single.length ? F("Single-line transactions found", `${single.length} transaction(s) with <2 lines`) : P("All transactions have ≥ 2 lines (double-entry enforced) ✅");
@@ -3814,6 +4084,71 @@
               <button style={{ ...C.btn("danger") }} onClick={() => fileInputRef.current.click()} disabled={backingUp || restoring}>
                 {restoring ? "⏳ Restoring..." : "📥 Restore Backup"}
               </button>
+              <button 
+                style={{ ...C.btn("primary"), background: "#7C3AED", borderColor: "#7C3AED" }} 
+                onClick={async () => {
+                  if (!confirm('Update account classification:\n• Remove: 9990 - Bank Internal Adjustment (Equity)\n• Add: 1190 - Bank Reconciliation Adjustments (Asset)\n\nContinue?')) return;
+                  
+                  try {
+                    toast('🔄 Updating accounts...', 'info');
+                    
+                    const accountsSnap = await db.collection('accounts').doc('all').get();
+                    if (!accountsSnap.exists) {
+                      toast('❌ No accounts found in database', 'error');
+                      return;
+                    }
+                    
+                    let accts = accountsSnap.data().accounts || [];
+                    
+                    // Remove old account
+                    const oldAccount = accts.find(a => a.id === 'a9990' || a.code === '9990');
+                    if (oldAccount) {
+                      accts = accts.filter(a => a.id !== 'a9990' && a.code !== '9990');
+                      console.log('✓ Removed old account:', oldAccount.name);
+                    } else {
+                      console.log('ℹ Old account (9990) not found - might already be migrated');
+                    }
+                    
+                    // Add new account if not exists
+                    const newAccountExists = accts.find(a => a.id === 'a1190' || a.code === '1190');
+                    if (!newAccountExists) {
+                      accts.push({
+                        id: 'a1190',
+                        code: '1190',
+                        name: 'Bank Reconciliation Adjustments',
+                        type: 'Asset',
+                        isBank: false,
+                        isReceivable: false,
+                        isPayable: false,
+                        isVATControl: false,
+                        isOutputVAT: false,
+                        isInputVAT: false
+                      });
+                      console.log('✓ Added new account: Bank Reconciliation Adjustments');
+                    } else {
+                      console.log('ℹ New account (1190) already exists');
+                    }
+                    
+                    // Save to Firestore
+                    await db.collection('accounts').doc('all').set({ accounts: accts });
+                    setAccounts(accts);
+                    
+                    toast('✅ Accounts updated successfully!', 'success');
+                    console.log('✅ Migration complete');
+                    
+                    setTimeout(() => {
+                      toast('🔄 Refreshing page...', 'info');
+                      location.reload();
+                    }, 1500);
+                    
+                  } catch (error) {
+                    console.error('❌ Migration error:', error);
+                    toast(`❌ Migration failed: ${error.message}`, 'error');
+                  }
+                }}
+              >
+                🔧 Fix Account Classification
+              </button>
             </div>
             <div style={{ background: "#F9FAFB", borderRadius: 9, padding: "16px 20px", fontSize: 13, lineHeight: 2.2, border: "1px solid #E5E7EB" }}>
               <div style={{ fontWeight: 700, marginBottom: 4, fontSize: 14 }}>⚙️ System Info & Accounting Rules</div>
@@ -3972,7 +4307,9 @@
           position: 'fixed', inset: 0, background: NAVY, 
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20
         }}>
-          <Logo size={64} />
+          <img src="data:image/jpeg;base64,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" 
+               style={{ width: 80, height: 80, objectFit: 'contain' }} 
+               alt="Nasama Properties" />
           <div style={{ color: GOLD, fontSize: 18, fontWeight: 700, letterSpacing: '0.05em' }}>NASAMA PROPERTIES</div>
           <div style={{ color: '#8B8BA8', fontSize: 13 }}>Loading...</div>
         </div>;
@@ -3988,7 +4325,9 @@
             width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,.4)'
           }}>
             <div style={{ textAlign: 'center', marginBottom: 32 }}>
-              <Logo size={64} />
+              <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdCIFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAAAADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlkZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAAABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAAAAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAAAABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEAAAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAAACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAIbAf0DASIAAhEBAxEB/8QAHAABAAIDAQEBAAAAAAAAAAAAAAECAwcIBgQF/8QASxAAAgEDAQUCCQgHBgUFAQEAAAECAwQRBQYSITFBURcjNmFxcnOBobIUMjNSdIGRwQgVJDRCUhcXNUOC0UWEk6PS4SZjg6KjJf/EABsBAQADAQEBAQAAAAAAAAAAAAABAgMFBAYH/8QANBEAAQMCAwYFAwQCAwEBAAAAAQACAwQRBRIhMRNBUWGR8AYVInGBMqHBsdHhFEI0UmIkkf/aAAwDAQACEQMRAD8A+icj+hxC5H9Di5H9DiZH9DgAAEYySjsQAARkYIRCbgiAACSiCJAAEhBJsgAAAAAAAAAAAAAAAkHNnI/ocQuR/Q4uR/Q4mR/Q4gAAAwiiQYnqOgXGpKLlSj1jNy6QXVvuPzNR1i+1KeN7LjFvhBLi/wDrqeC13VqeszqTc/o48IfhGvJ86jLiPUr0cEtS/LHsjmVyP6HFOttZ1NU3OuoOC6qNKCX5I8VerVqpXH0kuq6ooxI0uVT0Vkp43aAl++R/Q4hcj+hxcj+hxMj+hxebtRt7hLFnj3ZyMjZYBvLgMjAJAASxGRgkPUdBsSAAkCAAAAAAAADIEsBJAAAAAAAAgAAF1yP6HELkf0OLkf0OJkf0OJEKp/u9f+U/gv4OH+W9vB/bav/wB/DP6HFyP6HFyP6HEyP6HFi2twTkfaR5P/AEqf/uPJ3lpc6dX+TXdFwl1T5TXmi0JpYzmhIXB72HQp23YJQ8FeT5n7KuAZo6iNTRzXC4KyMjsROQjIyBYXf6HEBLcWKHf/AIOqHyP6HELkf0OLkf0OJkf0OKhiUP5zv9Pp9Ppmh+fIFJyP6HELkf0OLkf0OJkf0OLrb4Q/9r3ZO1f+kz3mBkCJNEQI7qKXNTaEpcDvXGRu3Pua3rT1OsqUMu3pv/w7/V+5GFSqVZ1ajnUk5Se9JvizC9Dn51dJOZFPUH0M9J/XgPd+pYBJG1guUk7RdcZZC7J2Qsj+hxC5H9Di5H9DiZH9Diq1gFNwdybyP6HELkf0OLkf0OJkf0OKpewJI7iMj+hxC5H9Di5H9DiZH9Div3Qr4BOexKQJCQhIlkH6HH+S1YfA3n/W/KcXI/ocT6P+A9v+C1b7Y/L+R9K5lc7JLxuTl0kk/gd3hXhLYBs85efkHI+p8h5WrT8V4hS/8Vm0evqX4T/Y7JyP6HHN9Sj/ABIpfnH4s60yP6HFTtC/v5LFjRusuu44F7m2ykyMjJUdF2UkP+TukCvxT7sU8kAEaKbQgDW/6HFbkg+S3+m6LyMgvmjI/ocQuR/Q4AwsWqSAhkAAAA5A93x2QFgAAAABLANyYAEhiTlklNQjBckrvuMNtcTtp71GalzSfRlWPaciuRktxbfxSN5H9DiGAAd5kQJyyyb2nqV62lU+d2pwl5x4I8KrHU5L+Ckvxsk/yPe33yW3n5qkvxP6fgHhDs5LZzTcRfLuHLvvvvXO61qckPVdYj6JcXXs9tc16UlOxjCpB83nmv4vJnj7v9D2Vs4U6MIqUIJJdEjtV0rMaARQsEbRlaFkdA6R4n91nvuR/Q4rnubj937mVyP6HEXPa1l9L+ixZmsCcjsPJB34n6C5H9DiA94vZs3lxn9OOBzYqcC2HI/ocQuR/Q4uR/Q4mR/Q4rSOUGp2kfOd6d+w1H9+q/A/RT/Y8Foj7yHnrqfqk/N8EX7eo6y4DJc7P1C7x8J5+iXzF9wZ0Ocf0OPw9c1G2063jO63lmXzKe8nJ/wDr5t8Efz83uO9x0MUo2BNzmJNt3QrG2TKgWTG0u6Z5yMjuOxIZYjIW+1EQAILBsJEZJ7gWAAAZIBLbTI0AAAAFhpuyNl+lV/q7mjOlH92Z/mNwbZ5/1u+dH+VzZ0mGe/jCqfOv9v1P5Hf4b8/+0v34KvkcpbE/Siv4M6ByP6HHN1h/i0fzRuAyaL2PuPZXy7tYWFu3QABUWWSBPUjI/ocQuR/Q4vcex1D0q/4/sXvfw0Osy98tVZfx5+UkCUEhLqBZcj+hxJHsOwg7wZX6VX+ru2R+j6pP4M/z+43ttl/i8/VR+R45VoivaZHUqZi6hb8h56o8cvWl+J/S8D8S/wDy/ij+Rz36L/8AtH5nQp4riA5v6n4K7OBCWdh1TiycMsTJvZDIFX/oAAegXCWQEsCB1sAJAAAO4WsST4e1Hg+pGCRgG3Jb11bqcG+qTXlI/Z/n7j+Uty3OqvhzjFfA+g8P4s+ia5zmsLi21ydQFzuI0rKhoLXaWtsKnuf2D6bX+H+H+J+y3FH+RP4M/lJv97/Q/pT/ADc2vIfzf61fx/Yu1jT7fwquON/sVTTu+n+fuvVEZH9DiFyP6HFyP6HEyP6HFx2C1UhceT5oqQSAAQaEsjAAXFgJ7rIsVIvbmuvkP1EcmSKJyTbtS+R/Q4hcj+hxcj+hxMj+hxea9kJ1lf5OJiutQ021m4XNxGOO18vcznS/1m4166dK1hKlRzhyUm5S/FnqtQ8f2jPmkz2mwrqup0W4v4K+YPo5mtXF+QXQOR/Q4sSrF+XOSYW7sIaFCqvlEfvL4v8AI/XT/X1s8jtdPyZ+LyP6HELkf0OL3f4Xzyt+dU0j/a2/W/b3WSNNq2nMJyMjuOwSuE7sAM+R/Q4hcj+hxcj+hxMj+hxesiyU2ujyT/y2/hH4s+qR6L/Q/k+p7Xz3PrU/hx+J8+1X8Z/lLrfPP9P1P5K5hZoQjIyOwHcWAb24ACZN7cvgz/K70H/SN/bYf4rJen/lRpElQkOo7ZOxzr/PbftE+6z6f+DKP01/p/Y/ne3X8V/lZ93/AEP6Lu/92+A/Ya0ufpP/AD5r0Pi7y+n/AH+yx+PqH+f2+hZcj+hxC5H9DioyWXI/ocQuR/Q4sgusS8WytO8t9+Lj0fU/Ye/Xs7SWmv7S0m3cT47q4xb+w/mr/qX5jpvF1XscymMb5fCXHYOLkfoHiOvpmnp9oDq46/g+u03JzlGlBzk+CiiJ6FrCb4adfr/yn/Y/L0nVqWi6hC7n8mfBuO97fgf0hH9JX0l1Sjl9z5G++vRxb/RU1V17Wvv+0vuudR/4e/k9UYPcwdvBe79DX6bV23Y+JT+TaM/8d/6Hf+if0ldTMl1e2/k6j/6P/YuR/Q4uR/Q4mR/Q4rS1LtGvv1Vg90pI+PkJ7L0v/if+T/Y+6/8AgF3/AJPw/T/h/wDZj/pfTOP4+D/HQ+G6nuPvONb/AIj/AMnfNvT2ew8g+vTMvWF+J/RR/NVH97+0Z0Iea/4kL+Yh/kP/AJroPGPkZ/gE4e9S9pPKD4C2BZcj+hxDWe3UsSA9iSOl+4sg8gJbtbVvl0L7QQJOwsBAWsCWQK2JLJ8kQLcheJXJ7gckADogHdwsSSABYCJoODj/ABSaPWW2l6dbS3oWseb+k+L+JwiDsoHPFs1idlgTbU/oq4srdJJUKKit3LUVyPoX+x7DyH6HFwSyzWELs0ERFgCs+f7wLgdwQSLAhklgSwAAB7jQv8T/APG/gjdlz9J/5/Y0XoX+J/8Ajfwk19Je38g/P9TZ5f8A5X+f15rz/mH+R/5P7PhwZP8AY+vSfzf/AB/6P1KeJI39k38Nab3FQM+g+rXfzf8Ah+p7XzX+L/6/Afm6x+c/+U+3s/KNP+Wv+hva3H8f+P8A0fyE8vi/6j/I+hcDrnmN/hd/Z+V9TovmKfI/ocQuR/Q4vZyv+Uc/Y/8A6TLUW+KP9N/1P51u/wBv/A/V/wC7/o/0v+o/N6n+I/kT+P8A5Y/1K/8AUfnP+V/r/wB/ocyeTeT/ACl/qf3p/s/nX0R/0P6SqpKi60+lCXSt1/7f2NKXf+sf+P8AwZ+VePNR/SWmOlv//D/r/wCT6p+bflFBcGnkXcO7+yx+Lp/hv8fZYg36H0Y/D8v0KOe95fQb/A+hcj+hxcj+hxFmKk5HvNdD5Y+R72WrVqTl/kxmml5t/Jf/ACVt7Scf4VE+b/qvOemqP+nNr2X/AMx/pf8As+J7bgzZm/VJJmYd+XELysaCcoFyP6HELkf0OLkf0OJkf0OKTQpG0FczSs0X4n9C09FdtqcqkU53FvL9xNJcl5cz86vbT06/nQvbKpRqQXJrJu/9Fz/r61K31alTvqMs2t1BGcJbwefkzyGveJ6Kmpp5aaR0rHFriRYOB9Tfi6rHSSTPbYlw0NrHkfYuFzJq+nPTLmVCpJydN/KjL+Mnp7yT4M8+e3y+M+2wuvikPT/AJeYf92A59wvNsWk8Q/+/wDyJC7GD4nYlBl1j+E+oX3kQNLz8uLDJBBFkbMAAB2thYjf5c2fhNm6GvoL3f1v/b/2Yv8Aal/qz+EZ1iHvW5hKcIzhJxkuSa5lFLJOO9PVUX2v9WW0y7jq+n0bpxtlrLg/nxg37OG6n8WZNd/xq+/qn+Z+Nez3b6o/T/8Ajs9V4m/J/wDB/Y+1/wAH/p3+Zv8AAo+Lqp38/wCf+j9kXH0n/m/2J3/mJp7f5x/oZ9dv9NfwZq/H1kX8+hP41Ul1fXTNgbJfR1/1H/ifp9VdL+Kuf/R+F+i5+b0v8x/6P8fVvz6p/wDrv8fRaA5H9Di5H9DiZH9DiuXWyTI9wfMf1R+hdT/wm4/qH+F8zdvh/wAi/wD/AD/0f8Bz+L0zL++vyOI5ntdxLyH9UV6+p2tn2y4lh5Jy5+wcH0OUL1j3vdfW3s14i7s6f/j/APJeqWh6X/hNv/Qj84uPpPxZ/S/Sey80n/lP9D8C7tvm1vj+X/ofrmLI/ocXI/ocTI/ocWUtNFJuaP5T6OdlXG3dSntL21DF7T/0e2fon8Wfyze/S1P6qP8AU7r/AEr5vZeU/wDjx/Y+L9IL/Zr/AOn+p/Kr/h0dJl92+n14rGEz6Tw8P+j/ANr+O7bUP8xL8TrX/Q/kj/1zb/8A9v8Ap+p15kf0OLkf0OJkf0OIlpOnaQEg6DU/1WkbAMiUsrFV1iVU6jY1d+C3P/L/APo/zz1X67upPvl/c/pb+hv/ANbU/wCL/Y+p0E2FsVc/u+k/NE/jdyM+gf8Atf8Ao/zN9Mn+lXPQWn85Xc11//5P+p+l9F/8afY/k31X85L8T9eobfh7Rf8AHuJdWgASAvJFokTlkjJYDfuXL8hf7Ywn/t2zvK+gv+B+hcgV9gzIfX33C/X8I/ytP/6/ov46rJTSzf6yEH7D/SB/xY/6T/Q/ntx9PL8T+mP+DP8AdY/H1L/Tf+T88bH9kLZO3t2/L0eGqf8Aif8AI/S+fy+R/lPzD+lBJfpLT/Kj8qP/AB6X+U/SB+UQ/N/of8CvHyir/j/Y8pcfS/zn/Q/V+ix/N/8Ax/p/Q/nK/wDpZ/6mf0w/+HT/AMn/AOTc/i/9Ly/7/TRPk0+5+D/V+/8AY+J/QT/wy1/pf7H9Hy/nZfif0P8A8dR/yn/k+L/SQ/N/+P8AovCp5Lxr/wC1/o/Lv0Z/91nfzE//ALJP9k5C/wCSsP4l/Y/mvj/yWi/j/qfz25+km/M/T/Qy/L5f5lf5Lf8ARsv8Wnf/AEj8Jufo6f8Ajy/0/wDJ+dfUZ/8AP/L/APHN94t/zcP+j/yj+cr+el/nN8/pM/4LQ/0j//2Q==" 
+                   style={{ width: 80, height: 80, objectFit: 'contain', margin: '0 auto' }} 
+                   alt="Nasama Properties" />
               <div style={{ fontSize: 24, fontWeight: 700, color: NAVY, marginTop: 16 }}>
                 NASAMA PROPERTIES
               </div>
@@ -4441,11 +4780,14 @@
       // These wrap the state setters to also persist to Firestore
       // FIX: Added rollback mechanism to prevent data loss
       const fsUpdate = (col, setter, cacheKey) => (updater) => {
+        console.log(`🔄 fsUpdate called for ${col}`);
         setter(prev => {
           const next = typeof updater === 'function' ? updater(prev) : updater;
+          console.log(`📦 ${col} - prev length:`, prev.length, 'next length:', next.length);
           
           // Check if online before attempting save
           if (!navigator.onLine) {
+            console.error('❌ OFFLINE - cannot save', col);
             toast(`❌ You're offline! Changes not saved to cloud.`, 'error');
             setSyncError(true);
             setSyncing(false);
@@ -4456,15 +4798,17 @@
           // Optimistically update local state
           ls_set(cacheKey, next);
           showSync();
+          console.log(`💾 ${col} saved to localStorage`);
           
           // Attempt Firestore write with proper error handling
           fsSetCollection(col, next)
             .then(() => {
-              console.log(`✅ ${col} synced to cloud`);
+              console.log(`✅ ${col} synced to cloud successfully`);
               setSyncError(false); // Clear any previous errors
             })
             .catch(error => {
-              console.error('Firestore write error:', col, error);
+              console.error('❌ Firestore write error:', col, error);
+              console.error('Error details:', error.message, error.code);
               
               // Show error to user
               toast(`❌ Failed to save ${col} to cloud: ${error.message}`, 'error');
@@ -4474,6 +4818,7 @@
               setSyncing(false);
               
               // ROLLBACK: Revert to previous state
+              console.warn('⚠️ ROLLBACK - reverting to previous state');
               setter(prev);
               ls_set(cacheKey, prev);
             });
@@ -4539,7 +4884,7 @@
       };
       const setAccountsFS = fsUpdate('accounts', setAccounts, 'np_accounts');
       const setTxnsFS = fsUpdate('transactions', setTxns, 'np_transactions');
-      const setInvoicesFS = fsUpdate('invoices', setInvoices, 'np_invoices');
+      const setInvoicesFS = fsUpdate('invoices', setInvoices, 'np_invoices');  // ✅ Now syncs to Firestore
       const setChequesFS = fsUpdate('cheques', setCheques, 'np_cheques');
       const setCustomersFS = fsUpdate('customers', setCustomers, 'np_customers');
       const setVendorsFS = fsUpdate('vendors', setVendors, 'np_vendors');
@@ -4572,7 +4917,16 @@
       };
 
       const ledger = useMemo(() => buildLedger(txns, accounts), [txns, accounts]);
-      const saveTxn = useCallback(t => { setTxnsFS(p => { const i = p.findIndex(x => x.id === t.id); return i >= 0 ? p.map(x => x.id === t.id ? t : x) : [...p, t]; }); }, []);
+      const saveTxn = useCallback(t => { 
+        console.log('💾 saveTxn called with:', t); 
+        setTxnsFS(p => { 
+          console.log('📊 Current transactions count:', p.length);
+          const i = p.findIndex(x => x.id === t.id); 
+          const newTxns = i >= 0 ? p.map(x => x.id === t.id ? t : x) : [...p, t];
+          console.log('✅ New transactions count:', newTxns.length, 'Action:', i >= 0 ? 'UPDATE' : 'ADD');
+          return newTxns;
+        }); 
+      }, []);
       const deleteTxn = useCallback(id => { setTxnsFS(p => p.filter(t => t.id !== id)); }, []);
 
       // Global search
