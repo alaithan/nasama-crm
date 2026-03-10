@@ -481,22 +481,22 @@
       { id: "v003", name: "PropTech Solutions FZ-LLC", email: "support@proptech.ae", phone: "+971 4 666 7777", category: "Technology", trn: "200777888900003" },
     ];
     const SEED_BROKERS = [
-      { id: "BR001", name: "Abdulsalam Alaithan", nationality: "Saudi Arabia", phone: "502757603", rera_no: "64897", rera_exp: "14.06.2026", commission_split: 50 },
-      { id: "BR002", name: "Ahmad Ibrahim", nationality: "Lebanon", phone: "506076506", rera_no: "83093", rera_exp: "14.06.2026", commission_split: 50 },
-      { id: "BR003", name: "Faoud Dada", nationality: "Lebanon", phone: "526920033", rera_no: "78849", rera_exp: "14.06.2026", commission_split: 50 },
-      { id: "BR004", name: "Marwa Khiari", nationality: "Tunisia", phone: "552129369", rera_no: "", rera_exp: "", commission_split: 50 },
-      { id: "BR005", name: "Monaf Hamza", nationality: "Syria", phone: "503038894", rera_no: "84529", rera_exp: "12.06.2026", commission_split: 50 },
-      { id: "BR006", name: "Nancy Tfaily", nationality: "Lebanon", phone: "554192910", rera_no: "", rera_exp: "", commission_split: 50 },
-      { id: "BR007", name: "Mohamed Kamal", nationality: "Egypt", phone: "552755399", rera_no: "", rera_exp: "", commission_split: 50 },
-      { id: "BR008", name: "Tarek Momneh", nationality: "Canada", phone: "501422789", rera_no: "91804", rera_exp: "10.12.2026", commission_split: 50 },
-      { id: "BR009", name: "Nene Belquz Diallo", nationality: "Liberia", phone: "522559448", rera_no: "94313", rera_exp: "10.02.2027", commission_split: 50 },
-      { id: "BR010", name: "Shuhaib Thalichalam", nationality: "India", phone: "522290234", rera_no: "", rera_exp: "", commission_split: 50 },
-      { id: "BR011", name: "Jerine Mathews", nationality: "India", phone: "585987400", rera_no: "", rera_exp: "", commission_split: 50 },
-      { id: "BR012", name: "Rajab Zahrawy", nationality: "Syria", phone: "585880024", rera_no: "", rera_exp: "", commission_split: 50 },
-      { id: "BR013", name: "Mohamad Teryaki", nationality: "Lebanon", phone: "558388197", rera_no: "", rera_exp: "", commission_split: 50 },
-      { id: "BR014", name: "Tarek Salhani", nationality: "Saudi Arabia", phone: "557310587", rera_no: "", rera_exp: "", commission_split: 50 },
-      { id: "BR015", name: "Mohammed Teryaki", nationality: "Lebanon", phone: "558388197", rera_no: "", rera_exp: "", commission_split: 50 },
-      { id: "BR016", name: "Alaa Muneer", nationality: "Jordan", phone: "501901890", rera_no: "", rera_exp: "", commission_split: 50 }
+      { id: "BR001", name: "Abdulsalam Alaithan", nationality: "Saudi Arabia", phone: "502757603", rera_no: "64897", rera_exp: "14.06.2026" },
+      { id: "BR002", name: "Ahmad Ibrahim", nationality: "Lebanon", phone: "506076506", rera_no: "83093", rera_exp: "14.06.2026" },
+      { id: "BR003", name: "Faoud Dada", nationality: "Lebanon", phone: "526920033", rera_no: "78849", rera_exp: "14.06.2026" },
+      { id: "BR004", name: "Marwa Khiari", nationality: "Tunisia", phone: "552129369", rera_no: "", rera_exp: "" },
+      { id: "BR005", name: "Monaf Hamza", nationality: "Syria", phone: "503038894", rera_no: "84529", rera_exp: "12.06.2026" },
+      { id: "BR006", name: "Nancy Tfaily", nationality: "Lebanon", phone: "554192910", rera_no: "", rera_exp: "" },
+      { id: "BR007", name: "Mohamed Kamal", nationality: "Egypt", phone: "552755399", rera_no: "", rera_exp: "" },
+      { id: "BR008", name: "Tarek Momneh", nationality: "Canada", phone: "501422789", rera_no: "91804", rera_exp: "10.12.2026" },
+      { id: "BR009", name: "Nene Belquz Diallo", nationality: "Liberia", phone: "522559448", rera_no: "94313", rera_exp: "10.02.2027" },
+      { id: "BR010", name: "Shuhaib Thalichalam", nationality: "India", phone: "522290234", rera_no: "", rera_exp: "" },
+      { id: "BR011", name: "Jerine Mathews", nationality: "India", phone: "585987400", rera_no: "", rera_exp: "" },
+      { id: "BR012", name: "Rajab Zahrawy", nationality: "Syria", phone: "585880024", rera_no: "", rera_exp: "" },
+      { id: "BR013", name: "Mohamad Teryaki", nationality: "Lebanon", phone: "558388197", rera_no: "", rera_exp: "" },
+      { id: "BR014", name: "Tarek Salhani", nationality: "Saudi Arabia", phone: "557310587", rera_no: "", rera_exp: "" },
+      { id: "BR015", name: "Mohammed Teryaki", nationality: "Lebanon", phone: "558388197", rera_no: "", rera_exp: "" },
+      { id: "BR016", name: "Alaa Muneer", nationality: "Jordan", phone: "501901890", rera_no: "", rera_exp: "" }
     ];
     // ── ONE-TIME MIGRATION: push real brokers to Firestore if collection is empty ──
     db.collection('brokers').get().then(snap => {
@@ -1590,6 +1590,7 @@
       const [editId, setEditId] = useState(null); const [errs, setErrs] = useState([]);
       const blank = {
         property_name: "", developer_id: "", developer: "", broker_id: "", broker_name: "", client_name: "", customer_id: "", type: "Off-Plan", stage: "Lead", commission_pct: "", expected_commission_net: "", vat_applicable: true, notes: "", created_at: todayStr(), transaction_value: "", unit_no: "", invoice_no: "", aml_no: "", kyc_sent: "NO", kyc_received: "NO",
+        commission_split: undefined,  // IMPORTANT: Start as undefined, will default to 50 if not set
         seller_name: "", seller_id: "", seller_comm_pct: "", buyer_comm_pct: "", seller_comm_amt: "", buyer_comm_amt: "", comm_discount: "", contract_no: "",
         contract_type: "1 Year Contract", rent_start: "", rent_end: "", renewal_reminder: "", comm_incl_vat: "",
         // Revenue Recognition Control Fields (separate from deal stage)
@@ -1599,13 +1600,58 @@
 
       useEffect(() => { const h = () => { setEditId(null); setF(blank); setErrs([]); setOpen(true); }; document.addEventListener("add-deal", h); return () => document.removeEventListener("add-deal", h); }, []);
 
+      // Helper function to properly initialize commission_split when opening edit form
+      const openEditForm = (deal) => {
+        // Ensure commission_split is always set to a valid positive number
+        // Treat 0 as invalid (not set)
+        const broker = brokers.find(b => b.id === deal.broker_id);
+        let commission_split;
+        
+        if (deal.commission_split !== undefined && deal.commission_split !== null && deal.commission_split > 0) {
+          // Use deal's current split if it's a valid positive number
+          commission_split = parseFloat(deal.commission_split);
+        } else if (broker?.commission_split && broker.commission_split > 0) {
+          // Use broker's default if available and positive
+          commission_split = broker.commission_split;
+        } else {
+          // Default to 50
+          commission_split = 50;
+        }
+        
+        setEditId(deal.id);
+        setF({ 
+          ...deal, 
+          expected_commission_net: fromCents(deal.expected_commission_net), 
+          transaction_value: fromCents(deal.transaction_value),
+          commission_split: commission_split  // Always a valid positive number
+        });
+        setErrs([]);
+        setOpen(true);
+      };
+
       const save = () => {
         if (!f.property_name) { setErrs(["Property name required"]); return; }
+        
+        // PERMANENT FIX: Ensure commission_split is ALWAYS set and saved as a valid number
+        // Treat 0 as invalid (not set)
+        let finalCommissionSplit;
+        if (f.commission_split !== undefined && f.commission_split !== null && f.commission_split !== '' && f.commission_split > 0) {
+          // Use the form value if it's a valid positive number
+          finalCommissionSplit = parseFloat(f.commission_split);
+        } else if (f.broker_id) {
+          // Use broker's default split if available
+          const broker = brokers.find(b => b.id === f.broker_id);
+          finalCommissionSplit = broker?.commission_split && broker.commission_split > 0 ? broker.commission_split : 50;
+        } else {
+          // Default to 50
+          finalCommissionSplit = 50;
+        }
+        
         const rec = { 
           ...f, 
           expected_commission_net: toCents(f.expected_commission_net), 
           transaction_value: toCents(f.transaction_value),
-          commission_split: f.commission_split ? parseFloat(f.commission_split) : undefined  // Convert to number!
+          commission_split: finalCommissionSplit  // ALWAYS a valid positive number
         };
         
         // Auto-set revenue_status based on deal stage (only if not already recognised)
@@ -1763,9 +1809,9 @@
         if (!arA || !revA || !outputVAT) { toast("Missing accounts", "error"); return; }
         if (!brokerExpA) { toast(`Broker commission expense account (${brokerExpMap[deal.type]}) not found`, "error"); return; }
         
-        // Calculate broker commission based on commission_split
+        // Calculate broker commission based on commission_split (from deal ONLY)
         const broker = brokers.find(b => b.id === deal.broker_id);
-        const splitPct = deal.commission_split ?? broker?.commission_split ?? 50;
+        const splitPct = deal.commission_split ?? 50;  // Split is in the deal, default 50 if missing
         const brokerCommC = Math.round(grossCommC * splitPct / 100);  // Broker's share in cents
         
         const lines = [
@@ -1821,7 +1867,7 @@
               <span style={{ background: "#E5E7EB", borderRadius: 10, padding: "1px 7px", fontWeight: 700, fontSize: 11, flexShrink: 0, marginLeft: 4 }}>{stageCount[stage] || 0}</span>
             </div>
             <div style={{ padding: 7, display: "flex", flexDirection: "column", gap: 7, minHeight: 60 }}>
-              {deals.filter(d => d.stage === stage).map(d => <div key={d.id} style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, padding: "9px 11px", cursor: "pointer" }} onClick={() => { setEditId(d.id); setF({ ...d, expected_commission_net: fromCents(d.expected_commission_net), transaction_value: fromCents(d.transaction_value) }); setErrs([]); setOpen(true); }}>
+              {deals.filter(d => d.stage === stage).map(d => <div key={d.id} style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, padding: "9px 11px", cursor: "pointer" }} onClick={() => openEditForm(d)}>
                 <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 3, lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.property_name}</div>
                 <div style={{ fontSize: 10, color: "#6B7280" }}>{d.type} · {d.broker_name}</div>
                 <div style={{ fontSize: 12, color: GOLD, fontWeight: 600, marginTop: 3 }}>{fmtAED(d.expected_commission_net)}</div>
@@ -1873,7 +1919,7 @@
                 <td style={{ ...C.td, textAlign: "center", fontSize: 11 }}>
                   {isSecondary
                     ? <div><div style={{ color: "#2563EB", fontWeight: 600 }}>{d.buyer_comm_pct ? `B: ${d.buyer_comm_pct}%` : ""}</div><div style={{ color: "#D97706", fontWeight: 600 }}>{d.seller_comm_pct ? `S: ${d.seller_comm_pct}%` : ""}</div></div>
-                    : <span style={C.badge("info")}>{d.commission_split ?? br?.commission_split ?? 0}%</span>}
+                    : <span style={C.badge("info")}>{(d.commission_split > 0 ? d.commission_split : (br?.commission_split || 50))}%</span>}
                 </td>
                 <td style={C.td}>
                   <select style={{ ...C.select, width: "auto", padding: "4px 8px", fontSize: 12 }} value={d.stage} onChange={e => updateStage(d.id, e.target.value)}>
@@ -1902,7 +1948,7 @@
                     {/* Always show Edit button */}
                     <button 
                       style={C.btn("secondary", true)} 
-                      onClick={() => { setEditId(d.id); setF({ ...d, expected_commission_net: fromCents(d.expected_commission_net), transaction_value: fromCents(d.transaction_value) }); setErrs([]); setOpen(true); }}>
+                      onClick={() => openEditForm(d)}>
                       Edit
                     </button>
                     
@@ -1996,8 +2042,20 @@
               </Sel>
               {f.customer_id && (() => { const c = customers.find(x => x.id === f.customer_id); return c ? <div style={{ fontSize: 11, color: "#6B7280", marginTop: 5, display: "flex", gap: 12 }}>{c.phone && <span>📞 {c.phone}</span>}{c.email && <span>✉️ {c.email}</span>}{c.trn && <span>TRN: {c.trn}</span>}</div> : null; })()}
             </FItem>
-            <FItem label="Broker"><Sel value={f.broker_id || ""} onChange={e => { const br = brokers.find(b => b.id === e.target.value); setF(p => ({ ...p, broker_id: e.target.value, broker_name: br?.name || p.broker_name, commission_split: br?.commission_split ?? p.commission_split })) }}><option value="">— Select —</option>{brokers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</Sel></FItem>
-            <FItem label="Commission Split %"><Inp type="number" min="0" max="100" value={f.commission_split ?? 50} onChange={e => setF(p => ({ ...p, commission_split: parseFloat(e.target.value) || 50 }))} /></FItem>
+            <FItem label="Broker"><Sel value={f.broker_id || ""} onChange={e => { 
+              const br = brokers.find(b => b.id === e.target.value); 
+              setF(p => ({ 
+                ...p, 
+                broker_id: e.target.value, 
+                broker_name: br?.name || p.broker_name
+                // Note: commission_split is NOT changed when selecting broker
+                // Split % is deal-specific, not broker-specific
+              })) 
+            }}><option value="">— Select —</option>{brokers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</Sel></FItem>
+            <FItem label="Commission Split %"><Inp type="number" min="0" max="100" value={f.commission_split !== undefined && f.commission_split !== null ? f.commission_split : 50} onChange={e => {
+              const val = parseFloat(e.target.value);
+              setF(p => ({ ...p, commission_split: isNaN(val) ? undefined : val }));
+            }} /></FItem>
 
             {/* ── SECONDARY: Seller & Commission Split ── */}
             {f.type === "Secondary" && <>
@@ -2205,14 +2263,13 @@
     // ╚══════════════════════════════════════════╝
     function BrokersPage({ brokers, setBrokers, deals }) {
       const [open, setOpen] = useState(false); const [editId, setEditId] = useState(null);
-      const blank = { name: "", nationality: "", phone: "", email: "", rera_no: "", rera_exp: "", commission_split: 50 };
+      const blank = { name: "", nationality: "", phone: "", email: "", rera_no: "", rera_exp: "" };
       const [f, setF] = useState(blank);
       useEffect(() => { const h = () => { setEditId(null); setF(blank); setOpen(true); }; document.addEventListener("add-broker", h); return () => document.removeEventListener("add-broker", h); }, []);
       const save = () => { 
         if (!f.name) { toast("Name required", "error"); return; } 
-        const rec = { ...f, commission_split: f.commission_split ? parseFloat(f.commission_split) : 50 };
-        if (editId) setBrokers(p => p.map(c => c.id === editId ? { ...c, ...rec } : c)); 
-        else setBrokers(p => [...p, { ...rec, id: "BR" + Math.floor(Math.random() * 900 + 100) }]); 
+        if (editId) setBrokers(p => p.map(c => c.id === editId ? { ...c, ...f } : c)); 
+        else setBrokers(p => [...p, { ...f, id: "BR" + Math.floor(Math.random() * 900 + 100) }]); 
         setOpen(false); 
         toast("Broker saved ✅", "success"); 
       };
@@ -2259,7 +2316,6 @@
             <FItem label="Email"><Inp value={f.email || ""} onChange={e => setF(p => ({ ...p, email: e.target.value }))} /></FItem>
             <FItem label="RERA No."><Inp value={f.rera_no || ""} onChange={e => setF(p => ({ ...p, rera_no: e.target.value }))} /></FItem>
             <FItem label="RERA Expiry (DD.MM.YYYY)"><Inp value={f.rera_exp || ""} placeholder="e.g. 14.06.2026" onChange={e => setF(p => ({ ...p, rera_exp: e.target.value }))} /></FItem>
-            <FItem label="Commission Split %"><Inp type="number" value={f.commission_split} onChange={e => setF(p => ({ ...p, commission_split: parseFloat(e.target.value) || 50 }))} /></FItem>
           </FG>
         </Modal>
       </div>;
